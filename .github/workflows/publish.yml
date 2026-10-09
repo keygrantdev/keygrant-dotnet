@@ -1,26 +1,33 @@
 name: publish
 
-# A version tag (0.2.0, no "v") tests and packs KeyGrant.Licensing, then pushes that package and its symbols
+# A version tag (0.2.0, no "v") builds and packs KeyGrant.Licensing, then pushes that package and its symbols
 # to nuget.org through NuGet's trusted publishing: the API key is short-lived and made for this run, and
 # none is stored anywhere. The build job cannot request an identity token; the publish job, which can, runs
 # no package code. A version already on nuget.org is skipped.
 #
 # NUGET_USER is the nuget.org profile name that owns the trusted publishing policy.
 
+# Run by hand from the Actions tab, from the tag itself (Use workflow from: the tag), it publishes that tag
+# the same way: the rescue for a tag whose push started no run. Never from a branch: the package's provenance
+# names the commit of the run's own ref.
+
 on:
   push:
     tags:
       - '[0-9]+.[0-9]+.[0-9]+'
       - '[0-9]+.[0-9]+.[0-9]+-*'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: publish-${{ github.ref }}
+  group: publish-${{ github.ref_name }}
   cancel-in-progress: false
 
 env:
+  TAG: ${{ github.ref_name }}
+  RELEASE: KeyGrant .NET SDK
   NUGET_USER: keygrant
   DOTNET_CLI_TELEMETRY_OPTOUT: '1'
   DOTNET_NOLOGO: '1'
@@ -35,42 +42,64 @@ jobs:
       run:
         working-directory: sdk-dotnet
     steps:
+      - name: Check the run is for a version tag
+        working-directory: .
+        run: |
+          if [ "$GITHUB_REF_TYPE" != tag ] || ! [[ "$TAG" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Run this from a version tag (Use workflow from: the tag, such as 0.3.1), never from a branch."
+            exit 1
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: refs/tags/${{ env.TAG }}
           persist-credentials: false
+      - name: Check the tag is a KeyGrant release
+        working-directory: .
+        run: |
+          # Only what the release pipeline made is published: an annotated tag by KeyGrant, on KeyGrant's
+          # release commit for this version. Its source commit ran the SDK's suite before the tag was pushed.
+          git fetch --quiet --no-tags --depth=1 origin "+refs/tags/$TAG:refs/tags/$TAG"
+          keygrant='KeyGrant <dev@keygrant.dev>'
+          if [ "$(git cat-file -t "refs/tags/$TAG")" != tag ] \
+            || [ "$(git for-each-ref --format='%(taggername) %(taggeremail)' "refs/tags/$TAG")" != "$keygrant" ] \
+            || [ "$(git log -1 --format='%an <%ae>|%cn <%ce>' "refs/tags/$TAG^{commit}")" != "$keygrant|$keygrant" ] \
+            || [ "$(git log -1 --format=%B "refs/tags/$TAG^{commit}")" != "$RELEASE $TAG" ]; then
+            echo "::error::$TAG is not a release the KeyGrant release pipeline made (an annotated tag by KeyGrant on its release commit): nothing is published."
+            exit 1
+          fi
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: '8.0.x'
       - name: Check the tag is the package's version
         run: |
           version=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' KeyGrant.Licensing/KeyGrant.Licensing.csproj)
-          if [ "$version" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::The tag $GITHUB_REF_NAME is not the <Version> in KeyGrant.Licensing.csproj ($version)."
+          if [ "$version" != "$TAG" ]; then
+            echo "::error::The tag $TAG is not the <Version> in KeyGrant.Licensing.csproj ($version)."
             exit 1
           fi
       - name: Check whether nuget.org has it already
         id: out
         run: |
-          lower=$(printf '%s' "$GITHUB_REF_NAME" | tr '[:upper:]' '[:lower:]')
+          lower=$(printf '%s' "$TAG" | tr '[:upper:]' '[:lower:]')
           if curl -fsS --max-time 30 https://api.nuget.org/v3-flatcontainer/keygrant.licensing/index.json | grep -q "\"$lower\""; then
-            echo "::notice::KeyGrant.Licensing $GITHUB_REF_NAME is already on nuget.org: nothing to publish."
+            echo "::notice::KeyGrant.Licensing $TAG is already on nuget.org: nothing to publish."
             echo "publish=false" >> "$GITHUB_OUTPUT"
           else
             echo "publish=true" >> "$GITHUB_OUTPUT"
           fi
-      - name: Test
+      # No test suite here: the SDK's suite and its conformance vectors ran on the source commit this export was
+      # made from, before the tag was pushed. This job proves the artifact: built from the tagged source, then
+      # checked.
+      - name: Build and pack
         if: steps.out.outputs.publish == 'true'
-        run: dotnet test KeyGrant.Licensing.sln -c Release
-      - name: Pack
-        if: steps.out.outputs.publish == 'true'
-        run: dotnet pack KeyGrant.Licensing/KeyGrant.Licensing.csproj -c Release --no-build -o ../out
+        run: dotnet pack KeyGrant.Licensing/KeyGrant.Licensing.csproj -c Release -o ../out
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: steps.out.outputs.publish == 'true'
         with:
           name: package
           path: |
-            out/KeyGrant.Licensing.${{ github.ref_name }}.nupkg
-            out/KeyGrant.Licensing.${{ github.ref_name }}.snupkg
+            out/KeyGrant.Licensing.${{ env.TAG }}.nupkg
+            out/KeyGrant.Licensing.${{ env.TAG }}.snupkg
           if-no-files-found: error
           retention-days: 7
 
@@ -97,5 +126,5 @@ jobs:
         env:
           NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
         run: >
-          dotnet nuget push "KeyGrant.Licensing.$GITHUB_REF_NAME.nupkg"
+          dotnet nuget push "KeyGrant.Licensing.$TAG.nupkg"
           --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate

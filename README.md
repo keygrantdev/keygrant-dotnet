@@ -21,7 +21,7 @@ The tests reproduce `conformance/vectors.json`, the behaviour every KeyGrant SDK
 
 ## Releases
 
-Each release is a version tag (`0.2.0`). The tag runs `.github/workflows/publish.yml`, which tests and
+Each release is a version tag (`0.2.1`). The tag runs `.github/workflows/publish.yml`, which builds and
 packs the package and pushes it to nuget.org through NuGet's trusted publishing.
 
 ## License
