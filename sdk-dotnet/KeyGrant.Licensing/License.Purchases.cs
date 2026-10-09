@@ -98,7 +98,12 @@ public sealed partial class License
         {
             cancellationToken.ThrowIfCancellationRequested();
             var bound = ask.Force && !ask.Start ? (TimeSpan?)null : TimeSpan.FromMilliseconds(Wire.StatusCheckTimeoutMs);
-            if (request is not null) response = await PostAsync("claim", request.ToJson(), bound, cancellationToken).ConfigureAwait(false);
+            if (request is not null)
+            {
+                var body = request.ToJson();
+                body["kids"] = KidsJson();
+                response = await PostAsync("claim", body, bound, cancellationToken).ConfigureAwait(false);
+            }
         }
         catch (Exception) when (!cancellationToken.IsCancellationRequested)
         {

@@ -15,6 +15,8 @@ internal enum LeaseCheckFailure
     Upgrade,
     Outdated,
     Tampered,
+    /// <summary>Signed by a key the build does not carry.</summary>
+    UnknownKey,
     Device,
 }
 
@@ -111,7 +113,12 @@ internal static partial class Offline
     {
         if (!v.Valid || v.Claims is null)
         {
-            return LeaseCheck.Refused(v.Reason == VerifyFailure.Expired ? LeaseCheckFailure.Expired : LeaseCheckFailure.Tampered);
+            return LeaseCheck.Refused(v.Reason switch
+            {
+                VerifyFailure.Expired => LeaseCheckFailure.Expired,
+                VerifyFailure.UnknownKey => LeaseCheckFailure.UnknownKey,
+                _ => LeaseCheckFailure.Tampered,
+            });
         }
         var claims = v.Claims;
         if (claims.Product != product) return LeaseCheck.Refused(LeaseCheckFailure.Tampered);

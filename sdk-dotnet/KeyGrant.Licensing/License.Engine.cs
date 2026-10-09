@@ -299,7 +299,30 @@ public sealed partial class License
         if (state.KeptMajor is { } kept) body["keptMajor"] = kept;
         if (device.CanTell) body["fingerprints"] = new JsonArray(device.Fingerprints.Select(f => (JsonNode?)JsonValue.Create(f)).ToArray());
         if (device.CanTell && device.Kind is { } kind) body["fingerprintKind"] = Names.Of(kind);
+        body["kids"] = KidsJson();
         return body;
+    }
+
+    /// <summary>
+    /// The ids of the keys this build carries (<c>kid</c>, each key's thumbprint), in the order configured:
+    /// sent with each activation, validate and claim, so the product's dashboard can count the devices whose
+    /// builds do not carry a key yet.
+    /// </summary>
+    private JsonArray KidsJson() => new(verifier.KeyIdList.Select(k => (JsonNode?)JsonValue.Create(k)).ToArray());
+
+    /// <summary>
+    /// The key set a configuration gives: <see cref="LicenseConfig.PublicJwks"/>, or
+    /// <see cref="LicenseConfig.PublicJwk"/> as a set of one. Neither, both, or an empty set is refused.
+    /// </summary>
+    private static IReadOnlyList<PublicJwk> KeySetOf(LicenseConfig config)
+    {
+        if (config.PublicJwk is not null && config.PublicJwks is not null)
+        {
+            throw new ArgumentException("give PublicJwks or PublicJwk, not both", nameof(config));
+        }
+        var keys = config.PublicJwks ?? (config.PublicJwk is { } one ? [one] : []);
+        if (keys.Count == 0 || keys.Any(k => k is null)) throw new ArgumentException("give the public keys of the product (PublicJwks)", nameof(config));
+        return keys;
     }
 
     private static LicenseStatus Invalid(LicenseReason reason, string? key) => Wire.InvalidStatus(reason, key);

@@ -66,6 +66,12 @@ public enum LicenseReason
 
     /// <summary>The licence file could not be read just now (state <see cref="LicenseState.Unknown"/>).</summary>
     Storage,
+
+    /// <summary>
+    /// The lease is signed by a key this build does not carry (<see cref="LicenseConfig.PublicJwks"/>). Asked
+    /// online, the server signs one with the key it uses now, which a build carrying that key verifies.
+    /// </summary>
+    UnknownKey,
 }
 
 /// <summary>
@@ -129,6 +135,21 @@ public enum DeviceKind
 
     /// <summary>The host name, platform and architecture.</summary>
     Hostname,
+}
+
+/// <summary>
+/// What <see cref="License.RequireAsync"/> throws when the licence does not grant an entitlement: names it as
+/// <see cref="Entitlement"/>.
+/// </summary>
+public sealed class MissingEntitlementException : Exception
+{
+    /// <summary>The licence does not grant <paramref name="entitlement"/>.</summary>
+    /// <param name="entitlement">The entitlement's code, as the app asked for it.</param>
+    public MissingEntitlementException(string entitlement)
+        : base($"the licence does not grant \"{entitlement}\"") => Entitlement = entitlement;
+
+    /// <summary>The entitlement's code, as the app asked for it.</summary>
+    public string Entitlement { get; }
 }
 
 /// <summary>

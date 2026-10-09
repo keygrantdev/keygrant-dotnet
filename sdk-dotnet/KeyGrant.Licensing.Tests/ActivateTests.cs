@@ -129,7 +129,7 @@ public class ActivateTests
         await h.License.ActivateAsync(Key);
         // A fingerprinter with only GetAsync reports no kind.
         AssertJson.Equal(
-            new JsonObject { ["key"] = Key, ["fingerprint"] = "fp-test", ["name"] = "Box", ["major"] = 3 },
+            new JsonObject { ["key"] = Key, ["fingerprint"] = "fp-test", ["name"] = "Box", ["major"] = 3, ["kids"] = new JsonArray(h.Signer.Kid) },
             h.Http.BodyOf("activate"));
     }
 

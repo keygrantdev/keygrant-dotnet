@@ -207,7 +207,7 @@ public class StatusTests
         h.Http.Fail = true;
         await h.License.RefreshAsync();
         AssertJson.Equal(
-            new JsonObject { ["key"] = "KEY", ["activationId"] = "act_1", ["major"] = 3, ["keptMajor"] = 4, ["fingerprints"] = new JsonArray("fp-test") },
+            new JsonObject { ["key"] = "KEY", ["activationId"] = "act_1", ["major"] = 3, ["keptMajor"] = 4, ["fingerprints"] = new JsonArray("fp-test"), ["kids"] = new JsonArray(h.Signer.Kid) },
             h.Http.BodyOf("validate"));
     }
 

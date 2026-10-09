@@ -22,7 +22,7 @@ public partial class ConformanceTests
         "mapServerError", "refusalOf", "enteredKey", "trimDeviceName", "noAnswer", "parseLeaseBody", "parseTrialBody", "mountinfo",
         "machineIds", "renewals", "validLeaseAsks", "devices", "identities", "savedLastSeen", "leaseStatuses", "trialLeaseStatuses",
         "entitlementNumbers", "majors", "purchaseUrls", "purchaseTokenKept", "claimDue", "parseClaimBody", "claimOutcomes", "trialReportDue",
-        "purchaseReferences", "claimBodies",
+        "purchaseReferences", "claimBodies", "keyIds", "keySets", "grants",
     ];
 
     private static readonly string[] NotGroups = ["$comment", "conventions", "publicJwk", "constants"];
@@ -100,7 +100,7 @@ public partial class ConformanceTests
             .Select(l => Bool(l!["expect"]!["ok"]) == true ? "ok" : Str(l!["expect"]!["reason"])!)
             .Distinct()
             .Order(StringComparer.Ordinal);
-        Assert.Equal(["device", "expired", "ok", "outdated", "tampered", "upgrade"], reasons);
+        Assert.Equal(["device", "expired", "ok", "outdated", "tampered", "unknown-key", "upgrade"], reasons);
     }
 
     [Fact]
@@ -148,9 +148,13 @@ public partial class ConformanceTests
         var check = Offline.CheckLease(verified, Str(v["product"])!, Long(v["major"])!.Value, HolderOf(v["holder"]!));
         var expect = check.Ok
             ? new JsonObject { ["ok"] = true, ["test"] = check.Test }
-            : new JsonObject { ["ok"] = false, ["reason"] = check.Reason!.Value.ToString().ToLowerInvariant() };
+            : new JsonObject { ["ok"] = false, ["reason"] = ReasonName(check.Reason!.Value) };
         AssertJson.Equal(v["expect"], expect, $"{name}: expect");
     }
+
+    /// <summary>A check's reason as the vectors write it: <c>unknown-key</c> for <see cref="LeaseCheckFailure.UnknownKey"/>.</summary>
+    private static string ReasonName(LeaseCheckFailure reason) =>
+        reason == LeaseCheckFailure.UnknownKey ? "unknown-key" : reason.ToString().ToLowerInvariant();
 
     /// <summary>Whose a lease must be, as a vector gives it: the key and activation stored, and the device's claims.</summary>
     private static LeaseHolder HolderOf(JsonNode h) => new(Str(h["key"])!, Str(h["activationId"])!, Strings(h["claims"]), Bool(h["canTell"])!.Value);

@@ -36,7 +36,7 @@ var license = new License(new LicenseConfig
 {
     Product = "sluice",                         // the product slug in KeyGrant
     ApiBaseUrl = "https://api.keygrant.dev",
-    PublicJwk = KeyGrantKeys.Sluice,            // the product's PUBLIC JWK, embedded (below)
+    PublicJwks = PublicJwk.ParseSet(KeyGrantKeys.Sluice), // the product's PUBLIC keys, embedded (below)
     Major = 3,                                  // this build's major version: set it (a 0.x build is 1)
     DeviceName = Environment.MachineName,       // optional: a label in the customer's device list
 });
@@ -90,7 +90,7 @@ public partial class App : Application
     {
         Product = "sluice",
         ApiBaseUrl = "https://api.keygrant.dev",
-        PublicJwk = KeyGrantKeys.Sluice,
+        PublicJwks = PublicJwk.ParseSet(KeyGrantKeys.Sluice),
         Major = 3,
         Adapters = new LicenseAdapters { Registry = new WindowsRegistryStash("sluice") }, // optional
     });
@@ -146,7 +146,8 @@ it does not deadlock a UI thread that blocks on it; awaiting it is still the rig
 |---|---|
 | `Product` (required) | The product slug, matching the KeyGrant product. |
 | `ApiBaseUrl` (required) | The API base, e.g. `https://api.keygrant.dev` (one trailing slash is dropped). |
-| `PublicJwk` (required) | The product's Ed25519 public key as a JWK: a JSON string converts implicitly, or `new PublicJwk { X = "..." }`. |
+| `PublicJwks` | The product's Ed25519 public keys as JWKs: the key that signs its leases, and the next one once the product has one staged (below). `PublicJwk.ParseSet(json)` reads a JWK set. Give this or `PublicJwk`. |
+| `PublicJwk` | One public key, a key set of one: a JSON string converts implicitly, or `new PublicJwk { X = "..." }`. Give this or `PublicJwks`. |
 | `Major` | This build's major version (default 1). Keys are bound to, and cover, majors: set it. Read as KeyGrant's server reads a version: a 0.x build (`Major = 0`) is major 1, and so is any value below 1. |
 | `DeviceName` | A label for this device in the customer's device list; cut to 120 characters. |
 | `DeviceHold` | Whether a licence is held to the device it was activated on (default `true`). See below. |
@@ -155,7 +156,8 @@ it does not deadlock a UI thread that blocks on it; awaiting it is still the rig
 | `TimeProvider` | What the SDK's timers run on (default `TimeProvider.System`); for tests. |
 
 The configuration is checked when the `License` is created: an empty product or API, a bound that is
-not positive, or a public key that is not an Ed25519 public JWK throws `ArgumentException`.
+not positive, no public key, an empty key set, both `PublicJwks` and `PublicJwk`, or a public key that is
+not an Ed25519 public JWK throws `ArgumentException`.
 
 ## Trials: what the app calls
 
@@ -245,6 +247,7 @@ if (checkoutOpened && (await license.StatusAsync()).State != LicenseState.Licens
 | `Invalid` | `Outdated` | This build is OLDER than the key's lowest version. | "Update the app": the key is for a later version. |
 | `Invalid` | `Device` | The licence was activated on another device (this machine changed, or the licence file was copied). | "Activate again on this device" (`ActivateAsync(key)`). |
 | `Invalid` | `Tampered` | The stored lease is not for this licence at all (another key, activation or product, a bad signature). | Enter a key. |
+| `Invalid` | `UnknownKey` | The stored lease is signed by a key this build does not carry. Online, the server renews it with the key it signs with now. | "Update the app" when it stays so online: this build does not carry the product's signing key. |
 | `Unlicensed` | | No licence and no trial on this device. | Enter a key or start a trial. |
 
 `Stalled` is true when an earlier call on this `License` has not finished (a storage adapter stuck on a
@@ -313,29 +316,49 @@ while it waits its turn: once it runs, it only reads and saves. A licensed answe
 exception. `ActivateAsync` and `DeactivateAsync` throw
 `OperationCanceledException` until the server has answered, and save nothing.
 
-## Embedding the public key
+## Embedding the public keys
 
-The product's **public** key is the `publicJwk` field of
-`GET https://api.keygrant.dev/v1/products/<slug>/pubkey`, which is public and needs no API key (the
-dashboard shows the key only as SPKI and a `.pem`). Fetch it once and ship it with the app, e.g.
+The product's **public** keys are the `keys` of `GET https://api.keygrant.dev/v1/products/<slug>/pubkey`,
+which is public and needs no API key, and the dashboard's Signing key tab copies the same set (Copy key
+set). Fetch them when you build and ship them with the app, e.g.
 
 ```bash
 curl -s https://api.keygrant.dev/v1/products/sluice/pubkey
-# {"publicJwk":{"kty":"OKP","crv":"Ed25519","x":"..."},"keys":[...]}
+# {"publicJwk":{"kty":"OKP","crv":"Ed25519","x":"..."},"keys":[{"kty":"OKP","crv":"Ed25519","x":"...","kid":"..."}]}
 ```
 
-and embed that `publicJwk` value at build time:
+and embed that response, or the copied set, at build time:
 
 ```csharp
 internal static class KeyGrantKeys
 {
-    public const string Sluice = """{"kty":"OKP","crv":"Ed25519","x":"Ohg4h8SrYQ0m1su_zVacJLLwf_6rNsvOtV5oWY6CzJs"}""";
+    public const string Sluice = """{"keys":[{"kty":"OKP","crv":"Ed25519","x":"Ohg4h8SrYQ0m1su_zVacJLLwf_6rNsvOtV5oWY6CzJs"}]}""";
 }
+
+var license = new License(new LicenseConfig
+{
+    Product = "sluice",
+    ApiBaseUrl = "https://api.keygrant.dev",
+    PublicJwks = PublicJwk.ParseSet(KeyGrantKeys.Sluice),
+    Major = 2,
+});
 ```
 
-(that `x` is the conformance vectors' TEST key: use your product's own). An embedded resource or a
-`PublicJwk { X = ... }` works as well. Never ship the private key: a JWK carrying `d` is refused.
-The public key only verifies; holding it lets nobody sign a lease.
+(that `x` is the conformance vectors' TEST key: use your product's own). An embedded resource works as
+well. Never ship the private key: a JWK carrying `d` is refused. The public keys only verify; holding
+them lets nobody sign a lease.
+
+**Why a set.** A lease names the key that signed it (`kid` in its header, the key's RFC 7638
+thumbprint, which the SDK computes from the key itself). It is verified by that key; a lease that names
+none (every lease signed before key sets) by each key in turn; and one naming a key the build does not
+carry is refused (`UnknownKey`). When the product rotates its signing key, it first *stages* the next
+key, published beside the current one while every lease is still signed with the current key. Ship
+builds carrying both; once they are out, the product *switches*, and those builds verify every lease
+signed after it. Embed the whole set each time you build, so a build always carries the key that signs
+now and the one staged next. A `PublicJwk` alone is a set of one, as before.
+
+Each activation, validate and claim reports the ids of the keys the build carries (`kids`), so the
+dashboard can count the devices still on builds without the staged key before you switch.
 
 ## `DeviceHold`: holding a licence to its device
 
@@ -370,7 +393,7 @@ if (status.Test) status = status with { State = LicenseState.Invalid, Reason = L
 
 ## Entitlements
 
-A licence can grant more than the base product: an edition, a number of seats, a feature. The lease
+A licence can grant more than the base product: an edition, a number of seats, an add-on. The lease
 signs them (its `ent` claim) and the status hands them to the app as `Entitlements`, read offline like
 everything else on the lease:
 
@@ -395,6 +418,21 @@ var beta = status.Entitlements.TryGetValue("beta", out var flag) && flag.Flag ==
 - **A malformed claim never costs the licence:** a member that is not a flag, a number or a text (an
   object, a list, null) is left out, and an `ent` that is not an object at all reads as none. The SDK
   enforces none of the server's caps on them (how many, how long); the signature is what it trusts.
+
+To ask whether the licence grants an entitlement, name its code:
+
+```csharp
+if (await license.HasAsync("cloud_sync")) EnableCloudSync();
+await license.RequireAsync("export"); // throws MissingEntitlementException (its Entitlement is "export")
+```
+
+`HasAsync(code)` is true for a flag that is on, a number that is not zero, or a text that is not empty;
+false for anything else, and for a code the lease does not grant (matched exactly, case included). It is
+answered offline from the stored lease only, as `StatusAsync()` would answer from what is stored, with no
+request and no write: a licence that does not license this build, or none at all, grants nothing; a
+running trial grants what its trial lease does. `RequireAsync(code)` throws
+`MissingEntitlementException`, naming the code, when `HasAsync` would be false.
+`EntitlementGrants.Grants(status.Entitlements, code)` answers the same of a status already in hand.
 
 ## Where the state is kept
 

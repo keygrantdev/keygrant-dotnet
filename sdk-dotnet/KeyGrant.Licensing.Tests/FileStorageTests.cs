@@ -103,9 +103,10 @@ public class FileStorageTests
         await File.WriteAllTextAsync(Path.Combine(dir, "maindeck.json.3.3.other.tmp"), "{}");
         Aged(Path.Combine(dir, "maindeck.json.3.3.other.tmp"), stale * 2);
         await File.WriteAllTextAsync(Path.Combine(dir, "sluice.json.4.4.younger.tmp"), "{}");
-        Aged(Path.Combine(dir, "sluice.json.4.4.younger.tmp"), stale - TimeSpan.FromSeconds(5));
+        // Half the limit either side of it: a machine that stalls before the write still finds the younger young.
+        Aged(Path.Combine(dir, "sluice.json.4.4.younger.tmp"), stale / 2);
         await File.WriteAllTextAsync(Path.Combine(dir, "sluice.json.5.5.older.tmp"), "{}");
-        Aged(Path.Combine(dir, "sluice.json.5.5.older.tmp"), stale + TimeSpan.FromSeconds(5));
+        Aged(Path.Combine(dir, "sluice.json.5.5.older.tmp"), stale * 1.5);
 
         await new FileStorage(path).WriteAsync(new StoredState { Key = "K" });
         Assert.Equal(["maindeck.json.3.3.other.tmp", "sluice.json", "sluice.json.2.2.inflight.tmp", "sluice.json.4.4.younger.tmp"], Names(dir));

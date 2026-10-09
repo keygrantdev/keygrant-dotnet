@@ -37,7 +37,6 @@ public sealed partial class License
         ArgumentNullException.ThrowIfNull(config);
         ArgumentException.ThrowIfNullOrEmpty(config.Product, nameof(config.Product));
         ArgumentException.ThrowIfNullOrEmpty(config.ApiBaseUrl, nameof(config.ApiBaseUrl));
-        ArgumentNullException.ThrowIfNull(config.PublicJwk, nameof(config.PublicJwk));
         // Every request is bounded (a day at most: timers take no longer), never left open.
         if (config.HttpTimeout <= TimeSpan.Zero || config.HttpTimeout > TimeSpan.FromDays(1))
         {
@@ -52,7 +51,7 @@ public sealed partial class License
         httpTimeout = config.HttpTimeout;
         deviceHold = config.DeviceHold;
         time = config.TimeProvider ?? TimeProvider.System;
-        verifier = new LeaseVerifier(config.PublicJwk.KeyBytes());
+        verifier = new LeaseVerifier(KeySetOf(config).Select(jwk => jwk.KeyBytes()));
         // TRUNCATED, because the integrating app supplies it: the activate endpoint bounds every
         // string it takes, and a long name would turn a first activation into a 400.
         deviceName = Wire.TrimToLength(config.DeviceName, Wire.MaxDeviceName);
@@ -236,6 +235,7 @@ public sealed partial class License
             if (kind is { } k) body["fingerprintKind"] = Names.Of(k);
             if (deviceName is not null) body["name"] = deviceName;
             body["major"] = major;
+            body["kids"] = KidsJson();
             response = await PostAsync("activate", body, null, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception) when (!cancellationToken.IsCancellationRequested)

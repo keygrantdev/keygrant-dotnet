@@ -36,6 +36,8 @@ internal sealed record LeaseClaims
 internal enum VerifyFailure
 {
     Malformed,
+    /// <summary>The lease names a key (<c>kid</c>) the key set does not hold.</summary>
+    UnknownKey,
     BadSignature,
     BadClaims,
     Expired,
@@ -51,6 +53,7 @@ internal sealed record VerifyResult(bool Valid, VerifyFailure? Reason, LeaseClai
     public static string NameOf(VerifyFailure reason) => reason switch
     {
         VerifyFailure.Malformed => "malformed",
+        VerifyFailure.UnknownKey => "unknown-key",
         VerifyFailure.BadSignature => "bad-signature",
         VerifyFailure.BadClaims => "bad-claims",
         VerifyFailure.Expired => "expired",
@@ -59,21 +62,39 @@ internal sealed record VerifyResult(bool Valid, VerifyFailure? Reason, LeaseClai
 }
 
 /// <summary>
-/// The lease verifier, against one product's Ed25519 public key: the signature first, then the claims'
-/// shape, then the expiry.
+/// The lease verifier, against a product's key set: the key a lease names by its id (<c>kid</c>), or each
+/// key in turn for a lease that names none; then the claims' shape, then the expiry.
 /// </summary>
 internal sealed class LeaseVerifier
 {
-    private readonly Ed25519PublicKeyParameters key;
+    private readonly IReadOnlyList<(string Kid, byte[] Key)> keys;
 
+    /// <summary>A key set of one.</summary>
     public LeaseVerifier(byte[] publicKey)
+        : this([publicKey])
     {
-        if (publicKey.Length != Ed25519PublicKeyParameters.KeySize)
-        {
-            throw new ArgumentException($"an Ed25519 public key is {Ed25519PublicKeyParameters.KeySize} bytes", nameof(publicKey));
-        }
-        key = new Ed25519PublicKeyParameters(publicKey, 0);
     }
+
+    /// <summary>A key set: each raw 32-byte key in the order given, a key given twice kept once.</summary>
+    public LeaseVerifier(IEnumerable<byte[]> publicKeys)
+    {
+        var set = new List<(string, byte[])>();
+        foreach (var publicKey in publicKeys)
+        {
+            if (publicKey.Length != Ed25519PublicKeyParameters.KeySize)
+            {
+                throw new ArgumentException($"an Ed25519 public key is {Ed25519PublicKeyParameters.KeySize} bytes", nameof(publicKeys));
+            }
+            var kid = KeyIds.Of(publicKey);
+            // Held as bytes: 32 that are not a point on the curve are a key all the same, and verify nothing.
+            if (!set.Exists(k => k.Item1 == kid)) set.Add((kid, publicKey.ToArray()));
+        }
+        if (set.Count == 0) throw new ArgumentException("a key set holds at least one public key", nameof(publicKeys));
+        keys = set;
+    }
+
+    /// <summary>The ids of the keys in the set, in its order: what a check-in reports as <c>kids</c>.</summary>
+    public IReadOnlyList<string> KeyIdList => keys.Select(k => k.Kid).ToList();
 
     /// <summary>Verify <paramref name="token"/> at <paramref name="nowMs"/>. Never throws.</summary>
     public VerifyResult Verify(string token, long nowMs)
@@ -97,7 +118,12 @@ internal sealed class LeaseVerifier
 
         var signatureBytes = Base64Url.Decode(signature);
         if (signatureBytes is null) return VerifyResult.Failed(VerifyFailure.Malformed);
-        if (!SignatureHolds(Encoding.UTF8.GetBytes($"{header}.{payload}"), signatureBytes))
+        // The key the header names, else each key in turn; one it names that the set lacks is told apart.
+        var kid = KeyIdOf(header);
+        var candidates = kid is null ? keys : keys.Where(k => k.Kid == kid).ToList();
+        if (candidates.Count == 0) return VerifyResult.Failed(VerifyFailure.UnknownKey);
+        var signed = Encoding.UTF8.GetBytes($"{header}.{payload}");
+        if (!candidates.Any(k => SignatureHolds(k.Key, signed, signatureBytes)))
         {
             return VerifyResult.Failed(VerifyFailure.BadSignature);
         }
@@ -121,12 +147,36 @@ internal sealed class LeaseVerifier
         return text.Length > 0 && text[0] == (char)0xFEFF ? text[1..] : text;
     }
 
-    private bool SignatureHolds(byte[] data, byte[] signature)
+    /// <summary>
+    /// The key a lease's header names (<c>kid</c>), or null when it names none. A header names a key only
+    /// when it is, byte for byte, the header the server writes for one: canonical base64url of
+    /// <c>{"alg":"EdDSA","typ":"JWT","kid":"&lt;kid&gt;"}</c>, <c>&lt;kid&gt;</c> 1 to 64 characters of the
+    /// base64url alphabet. Any other header names no key. It is matched as bytes, never parsed.
+    /// </summary>
+    private static string? KeyIdOf(string header)
+    {
+        var bytes = Base64Url.Decode(header);
+        if (bytes is null) return null;
+        // Each byte as one character: a byte past ASCII matches nothing below.
+        var text = Encoding.Latin1.GetString(bytes);
+        // Long enough for both ends apart: `..."kid":"}` ends with `"}` only through the start's own quote.
+        if (text.Length < NamedHeaderStart.Length + NamedHeaderEnd.Length) return null;
+        if (!text.StartsWith(NamedHeaderStart, StringComparison.Ordinal) || !text.EndsWith(NamedHeaderEnd, StringComparison.Ordinal)) return null;
+        var kid = text[NamedHeaderStart.Length..^NamedHeaderEnd.Length];
+        return kid.Length is >= 1 and <= 64 && kid.All(IsBase64UrlChar) ? kid : null;
+    }
+
+    private const string NamedHeaderStart = "{\"alg\":\"EdDSA\",\"typ\":\"JWT\",\"kid\":\"";
+    private const string NamedHeaderEnd = "\"}";
+
+    private static bool IsBase64UrlChar(char c) => c is (>= 'A' and <= 'Z') or (>= 'a' and <= 'z') or (>= '0' and <= '9') or '-' or '_';
+
+    private static bool SignatureHolds(byte[] key, byte[] data, byte[] signature)
     {
         try
         {
             var verifier = new Ed25519Signer();
-            verifier.Init(false, key);
+            verifier.Init(false, new Ed25519PublicKeyParameters(key, 0));
             verifier.BlockUpdate(data, 0, data.Length);
             return verifier.VerifySignature(signature);
         }
@@ -135,41 +185,6 @@ internal sealed class LeaseVerifier
             return false;
         }
     }
-}
-
-/// <summary>
-/// CANONICAL base64url, as the server's verifier decodes it: the URL-safe alphabet, no padding, and nothing
-/// the encoder would not have written (encoding the result gives the input back, so no stray bits in the
-/// last character). Anything else is refused: every lease the server signs is canonical, so only a token
-/// nobody issued is.
-/// </summary>
-internal static class Base64Url
-{
-    /// <summary>The bytes <paramref name="input"/> spells, or null when it is not canonical base64url.</summary>
-    public static byte[]? Decode(string input)
-    {
-        if (input.Length % 4 == 1) return null;
-        foreach (var c in input)
-        {
-            if (!(char.IsAsciiLetterOrDigit(c) || c is '-' or '_')) return null;
-        }
-        var standard = input.Replace('-', '+').Replace('_', '/');
-        var pad = standard.Length % 4 == 0 ? 0 : 4 - (standard.Length % 4);
-        byte[] bytes;
-        try
-        {
-            bytes = Convert.FromBase64String(standard + new string('=', pad));
-        }
-        catch (FormatException)
-        {
-            return null;
-        }
-        // Stray bits in the last character decode to the same bytes, and re-encode differently.
-        return Encode(bytes) == input ? bytes : null;
-    }
-
-    public static string Encode(ReadOnlySpan<byte> bytes) =>
-        Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 }
 
 /// <summary>The claims schema, checked as the server's own schema checks it.</summary>
@@ -348,21 +363,4 @@ internal static partial class ClaimsParser
         value = element.GetBoolean();
         return true;
     }
-}
-
-/// <summary>The SHA-256 hashes the SDK and the server agree on.</summary>
-internal static class Hashes
-{
-    /// <summary>Lower-case hex SHA-256 of the UTF-8 of <paramref name="text"/>.</summary>
-    public static string Sha256Hex(string text)
-    {
-        var digest = SHA256.HashData(Encoding.UTF8.GetBytes(text));
-        return Convert.ToHexString(digest).ToLowerInvariant();
-    }
-
-    /// <summary>
-    /// The <c>fp</c> claim for a device fingerprint (<c>fingerprintClaim</c>): hex SHA-256 of it,
-    /// namespaced, so a lease never carries the fingerprint itself.
-    /// </summary>
-    public static string FingerprintClaim(string fingerprint) => Sha256Hex($"keygrant-fp|{fingerprint}");
 }

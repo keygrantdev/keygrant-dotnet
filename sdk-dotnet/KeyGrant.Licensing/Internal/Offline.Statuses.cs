@@ -24,7 +24,8 @@ internal static partial class Offline
     /// tells them apart) and the lease's entitlements (empty when it grants none; the status holds its
     /// own read-only copy);
     /// <c>expired</c> / <c>offline</c> once it has run out; <c>invalid</c> with the reason, and the key,
-    /// when it is not for this build or this device; <c>invalid</c> / <c>tampered</c>, with no key, when
+    /// when it is not for this build or this device, or is signed by a key the build does not carry
+    /// (<c>unknown-key</c>); <c>invalid</c> / <c>tampered</c>, with no key, when
     /// it is not this licence's at all. Only a lease that licenses carries entitlements.
     /// </summary>
     public static LicenseStatus LeaseStatus(LeaseCheck check, string? key) => check switch
@@ -34,6 +35,7 @@ internal static partial class Offline
         { Reason: LeaseCheckFailure.Upgrade } => Wire.InvalidStatus(LicenseReason.Upgrade, key),
         { Reason: LeaseCheckFailure.Outdated } => Wire.InvalidStatus(LicenseReason.Outdated, key),
         { Reason: LeaseCheckFailure.Device } => Wire.InvalidStatus(LicenseReason.Device, key),
+        { Reason: LeaseCheckFailure.UnknownKey } => Wire.InvalidStatus(LicenseReason.UnknownKey, key),
         _ => new LicenseStatus { State = LicenseState.Invalid, Reason = LicenseReason.Tampered },
     };
 

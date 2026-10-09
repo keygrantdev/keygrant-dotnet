@@ -16,11 +16,19 @@ public sealed class LicenseConfig
     public required string ApiBaseUrl { get; init; }
 
     /// <summary>
-    /// The product's public key (the <c>publicJwk</c> of
-    /// <c>GET https://api.keygrant.dev/v1/products/&lt;product&gt;/pubkey</c>), embedded at build time
-    /// for offline verification. A JWK JSON string converts to it implicitly.
+    /// The product's public keys, embedded at build time for offline verification: the key that signs its
+    /// leases, and the next one once the product has one staged (the <c>keys</c> of
+    /// <c>GET https://api.keygrant.dev/v1/products/&lt;product&gt;/pubkey</c>; <see cref="PublicJwk.ParseSet"/>
+    /// reads that JSON). A lease naming its key (<c>kid</c>) is verified by that key; one naming none by each
+    /// in turn. Give this or <see cref="PublicJwk"/>.
     /// </summary>
-    public required PublicJwk PublicJwk { get; init; }
+    public IReadOnlyList<PublicJwk>? PublicJwks { get; init; }
+
+    /// <summary>
+    /// One public key: a key set of one (the <c>publicJwk</c> of the same endpoint). A JWK JSON string converts
+    /// to it implicitly. Give this or <see cref="PublicJwks"/>.
+    /// </summary>
+    public PublicJwk? PublicJwk { get; init; }
 
     /// <summary>
     /// The running app's major version. Defaults to 1; set it, as the server binds keys by it. Read as the
@@ -72,8 +80,11 @@ public sealed class PublicJwk
     public required string X { get; init; }
 
     /// <summary>
-    /// The key in a JWK's JSON. Refuses one that carries a private key (<c>d</c>): that must never
-    /// ship in an app.
+    /// The key in a JWK's JSON, read as every KeyGrant SDK reads one: <c>kty</c> "OKP" and <c>crv</c>
+    /// "Ed25519", both required; no private key (<c>d</c>), which must never ship in an app; <c>use</c>,
+    /// when given, "sig"; <c>key_ops</c>, when given, a list naming "verify"; <c>alg</c>, when given,
+    /// "EdDSA" or "Ed25519"; and an <c>x</c> of 32 bytes, canonical base64url once its trailing <c>=</c>
+    /// are dropped. No other member is read.
     /// </summary>
     /// <param name="json">The JWK as JSON.</param>
     /// <returns>The public key.</returns>
@@ -86,20 +97,60 @@ public sealed class PublicJwk
             using var document = JsonDocument.Parse(json);
             var root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object) throw new ArgumentException("a JWK is a JSON object", nameof(json));
-            if (root.TryGetProperty("d", out _))
-            {
-                throw new ArgumentException("this JWK holds a PRIVATE key: embed the public one (no \"d\")", nameof(json));
-            }
-            string? Text(string name) =>
-                root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
-            var x = Text("x") ?? throw new ArgumentException("a JWK names its key as \"x\"", nameof(json));
-            var jwk = new PublicJwk { Kty = Text("kty"), Crv = Text("crv"), X = x };
+            if (RefusalOf(root) is { } refused) throw new ArgumentException(refused, nameof(json));
+            var jwk = new PublicJwk { Kty = TextOf(root, "kty"), Crv = TextOf(root, "crv"), X = TextOf(root, "x")! };
             jwk.KeyBytes();
             return jwk;
         }
         catch (JsonException error)
         {
             throw new ArgumentException("a JWK is JSON", nameof(json), error);
+        }
+    }
+
+    /// <summary>Why a JWK's members are not an Ed25519 public key's (<see cref="Parse"/>), or null when they are.</summary>
+    private static string? RefusalOf(JsonElement root)
+    {
+        bool Has(string name) => root.TryGetProperty(name, out _);
+        if (TextOf(root, "kty") != "OKP" || TextOf(root, "crv") != "Ed25519") return "an Ed25519 JWK has kty \"OKP\" and crv \"Ed25519\"";
+        if (Has("d")) return "this JWK holds a PRIVATE key: embed the public one (no \"d\")";
+        if (Has("use") && TextOf(root, "use") != "sig") return "a JWK for verifying has use \"sig\"";
+        if (root.TryGetProperty("key_ops", out var ops) && !NamesVerify(ops)) return "a JWK for verifying has key_ops naming \"verify\"";
+        if (Has("alg") && TextOf(root, "alg") is not ("EdDSA" or "Ed25519")) return "an Ed25519 JWK has alg \"EdDSA\"";
+        return TextOf(root, "x") is null ? "a JWK names its key as \"x\"" : null;
+    }
+
+    private static string? TextOf(JsonElement root, string name) =>
+        root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+
+    private static bool NamesVerify(JsonElement ops) =>
+        ops.ValueKind == JsonValueKind.Array
+        && ops.EnumerateArray().Any(op => op.ValueKind == JsonValueKind.String && op.GetString() == "verify");
+
+    /// <summary>
+    /// The keys of a JWK set's JSON (<c>{"keys": [...]}</c>, as <c>/pubkey</c> and the dashboard's Copy key set
+    /// give it), or of a JSON list of JWKs, in their order. Refuses an empty set, and any key
+    /// <see cref="Parse"/> refuses.
+    /// </summary>
+    /// <param name="json">The JWK set, or the list, as JSON.</param>
+    /// <returns>The public keys.</returns>
+    /// <exception cref="ArgumentException">It is not a set of Ed25519 public JWKs.</exception>
+    public static IReadOnlyList<PublicJwk> ParseSet(string json)
+    {
+        ArgumentNullException.ThrowIfNull(json);
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
+            var list = root.ValueKind == JsonValueKind.Object && root.TryGetProperty("keys", out var keys) ? keys : root;
+            if (list.ValueKind != JsonValueKind.Array) throw new ArgumentException("a JWK set is an object with a keys list, or a list of JWKs", nameof(json));
+            var parsed = list.EnumerateArray().Select(jwk => Parse(jwk.GetRawText())).ToList();
+            if (parsed.Count == 0) throw new ArgumentException("a JWK set holds at least one key", nameof(json));
+            return parsed;
+        }
+        catch (JsonException error)
+        {
+            throw new ArgumentException("a JWK set is JSON", nameof(json), error);
         }
     }
 

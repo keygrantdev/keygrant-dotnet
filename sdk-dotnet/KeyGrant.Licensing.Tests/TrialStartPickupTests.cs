@@ -51,7 +51,7 @@ public class TrialStartPickupTests
         Assert.Equal(Unlicensed, await h.License.StartTrialAsync());
         Assert.Equal(1, Volatile.Read(ref calls));
         AssertJson.Equal(
-            new JsonObject { ["token"] = Secret, ["fingerprint"] = "fp-host", ["fingerprintKind"] = "hostname", ["fingerprints"] = new JsonArray("fp-host"), ["major"] = 1 },
+            new JsonObject { ["token"] = Secret, ["fingerprint"] = "fp-host", ["fingerprintKind"] = "hostname", ["fingerprints"] = new JsonArray("fp-host"), ["major"] = 1, ["kids"] = new JsonArray(h.Signer.Kid) },
             h.Http.BodyOf("claim"));
     }
 

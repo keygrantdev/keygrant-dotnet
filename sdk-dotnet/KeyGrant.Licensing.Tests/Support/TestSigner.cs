@@ -58,6 +58,16 @@ internal sealed class TestSigner
         return SignInput($"{header}.{Base64Url.Encode(Encoding.UTF8.GetBytes(payloadText))}");
     }
 
+    /// <summary>The id a lease names this key by (its thumbprint).</summary>
+    public string Kid => KeyIds.Of(Base64Url.Decode(PublicX)!);
+
+    /// <summary>A lease's payload signed again by this key, under a header that names <paramref name="kid"/>.</summary>
+    public string Named(string lease, string kid)
+    {
+        var header = Base64Url.Encode(Encoding.UTF8.GetBytes($"{{\"alg\":\"EdDSA\",\"typ\":\"JWT\",\"kid\":\"{kid}\"}}"));
+        return SignInput($"{header}.{lease.Split('.')[1]}");
+    }
+
     /// <summary>Sign a signing input (<c>header.payload</c>) exactly as written, canonical or not.</summary>
     public string SignInput(string input)
     {

@@ -139,6 +139,6 @@ public partial class ConformanceTests
     {
         null => null,
         var c when Bool(c["ok"]) == true => LeaseCheck.Licensed(Bool(c["test"])!.Value, ClaimsParser.Parse(c["claims"]!.ToJsonString())!),
-        var c => LeaseCheck.Refused(Enum.Parse<LeaseCheckFailure>(Str(c["reason"])!, ignoreCase: true)),
+        var c => LeaseCheck.Refused(Enum.Parse<LeaseCheckFailure>(Str(c["reason"])!.Replace("-", "", StringComparison.Ordinal), ignoreCase: true)),
     };
 }

@@ -56,7 +56,7 @@ public class PickupTests
         Assert.Equal(Bought, await h.License.StatusAsync());
         // The secret, never the reference, and every fingerprint this device answers to, as a validate sends them.
         AssertJson.Equal(
-            new JsonObject { ["token"] = Secret, ["fingerprint"] = "fp-test", ["fingerprints"] = new JsonArray("fp-test"), ["name"] = "Rae's laptop", ["major"] = 1 },
+            new JsonObject { ["token"] = Secret, ["fingerprint"] = "fp-test", ["fingerprints"] = new JsonArray("fp-test"), ["name"] = "Rae's laptop", ["major"] = 1, ["kids"] = new JsonArray(h.Signer.Kid) },
             h.Http.BodyOf("claim"));
         var stored = h.Stored!;
         Assert.Equal((BoughtKey, "act_1", 1, Now), (stored.Key, stored.ActivationId, stored.CheckedMajor, stored.VerdictAt));
@@ -78,7 +78,7 @@ public class PickupTests
         h.Http.On("claim", _ => BoughtAnswer(h));
         Assert.Equal(Bought, await h.License.StatusAsync());
         AssertJson.Equal(
-            new JsonObject { ["token"] = Secret, ["fingerprint"] = "fp-machine", ["fingerprintKind"] = "machine", ["fingerprints"] = new JsonArray("fp-machine"), ["major"] = 1 },
+            new JsonObject { ["token"] = Secret, ["fingerprint"] = "fp-machine", ["fingerprintKind"] = "machine", ["fingerprints"] = new JsonArray("fp-machine"), ["major"] = 1, ["kids"] = new JsonArray(h.Signer.Kid) },
             h.Http.BodyOf("claim"));
         Assert.Equal(DeviceKind.Machine, h.Stored!.DeviceKind);
     }
@@ -261,7 +261,7 @@ public class PickupTests
         h.Http.On("claim", _ => Pending);
         await h.License.StatusAsync();
         AssertJson.Equal(
-            new JsonObject { ["token"] = Secret, ["fingerprint"] = "fp-own", ["fingerprints"] = new JsonArray("fp-own", "fp-host"), ["major"] = 1 },
+            new JsonObject { ["token"] = Secret, ["fingerprint"] = "fp-own", ["fingerprints"] = new JsonArray("fp-own", "fp-host"), ["major"] = 1, ["kids"] = new JsonArray(h.Signer.Kid) },
             h.Http.BodyOf("claim"));
     }
 

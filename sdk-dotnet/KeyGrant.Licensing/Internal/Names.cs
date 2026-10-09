@@ -56,6 +56,7 @@ internal static class Names
         LicenseReason.Device => "device",
         LicenseReason.Trial => "trial",
         LicenseReason.Storage => "storage",
+        LicenseReason.UnknownKey => "unknown-key",
         _ => throw new ArgumentOutOfRangeException(nameof(reason)),
     };
 
