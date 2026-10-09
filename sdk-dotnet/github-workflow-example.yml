@@ -1,0 +1,57 @@
+# GitHub Actions for the .NET SDK: an EXAMPLE, not enabled. To enable it, copy this file to
+# .github/workflows/sdk-dotnet.yml at the repository root.
+#
+# SystemTests drive the real readers and writers of each system: the registry, a file another
+# process holds and a rename over it on Windows; /etc/machine-id, /proc and the folder fsync on
+# Linux; ioreg on macOS; symbolic links (whose files are timed as fs.stat times them) and hard links
+# on all three. A test for another system, or for something the machine cannot do, is reported
+# SKIPPED with its reason, so each job runs its own and the three together run them all. The build
+# fails on any warning (TreatWarningsAsErrors, Directory.Build.props).
+name: sdk-dotnet
+
+on:
+  push:
+    paths: ['sdk-dotnet/**', 'conformance/**']
+  pull_request:
+    paths: ['sdk-dotnet/**', 'conformance/**']
+
+jobs:
+  test:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-latest
+          - name: macOS
+            os: macos-latest
+          - name: Windows
+            os: windows-latest
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: sdk-dotnet
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      # The host-name fingerprint is checked against node's own on the same machine.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build, failing on warnings
+        run: dotnet build KeyGrant.Licensing.sln -c Release
+      - name: Test
+        run: >
+          dotnet test KeyGrant.Licensing.sln -c Release --no-build
+          --logger "trx;LogFileName=results.trx"
+          --logger "console;verbosity=normal"
+      - name: Test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-dotnet-${{ matrix.os }}
+          path: sdk-dotnet/**/TestResults/*.trx

@@ -1,0 +1,101 @@
+name: publish
+
+# A version tag (0.2.0, no "v") tests and packs KeyGrant.Licensing, then pushes that package and its symbols
+# to nuget.org through NuGet's trusted publishing: the API key is short-lived and made for this run, and
+# none is stored anywhere. The build job cannot request an identity token; the publish job, which can, runs
+# no package code. A version already on nuget.org is skipped.
+#
+# NUGET_USER is the nuget.org profile name that owns the trusted publishing policy.
+
+on:
+  push:
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'
+      - '[0-9]+.[0-9]+.[0-9]+-*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NUGET_USER: keygrant
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_NOLOGO: '1'
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      publish: ${{ steps.out.outputs.publish }}
+    defaults:
+      run:
+        working-directory: sdk-dotnet
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '8.0.x'
+      - name: Check the tag is the package's version
+        run: |
+          version=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' KeyGrant.Licensing/KeyGrant.Licensing.csproj)
+          if [ "$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::The tag $GITHUB_REF_NAME is not the <Version> in KeyGrant.Licensing.csproj ($version)."
+            exit 1
+          fi
+      - name: Check whether nuget.org has it already
+        id: out
+        run: |
+          lower=$(printf '%s' "$GITHUB_REF_NAME" | tr '[:upper:]' '[:lower:]')
+          if curl -fsS --max-time 30 https://api.nuget.org/v3-flatcontainer/keygrant.licensing/index.json | grep -q "\"$lower\""; then
+            echo "::notice::KeyGrant.Licensing $GITHUB_REF_NAME is already on nuget.org: nothing to publish."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Test
+        if: steps.out.outputs.publish == 'true'
+        run: dotnet test KeyGrant.Licensing.sln -c Release
+      - name: Pack
+        if: steps.out.outputs.publish == 'true'
+        run: dotnet pack KeyGrant.Licensing/KeyGrant.Licensing.csproj -c Release --no-build -o ../out
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.out.outputs.publish == 'true'
+        with:
+          name: package
+          path: |
+            out/KeyGrant.Licensing.${{ github.ref_name }}.nupkg
+            out/KeyGrant.Licensing.${{ github.ref_name }}.snupkg
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: build
+    if: needs.build.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: package
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '8.0.x'
+      - uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+        id: login
+        with:
+          user: ${{ env.NUGET_USER }}
+      - name: Push to nuget.org
+        env:
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
+        run: >
+          dotnet nuget push "KeyGrant.Licensing.$GITHUB_REF_NAME.nupkg"
+          --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate

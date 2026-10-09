@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>KeyGrant.Licensing</RootNamespace>
+    <AssemblyName>KeyGrant.Licensing</AssemblyName>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
+    <PackageId>KeyGrant.Licensing</PackageId>
+    <Version>0.2.0</Version>
+    <Authors>KeyGrant</Authors>
+    <Description>KeyGrant licensing for .NET desktop apps: signed leases verified offline, activation, trials and renewals, failing in favour of the paying customer.</Description>
+    <PackageTags>licensing;license-key;activation;trial;ed25519;jwt;desktop</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://keygrant.dev/docs</PackageProjectUrl>
+    <Copyright>Copyright (c) 2026 KeyGrant</Copyright>
+    <!-- Symbols for debugging into the SDK, as a .snupkg beside the package. -->
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Ed25519 verification: .NET 8 has none of its own. MIT licensed. -->
+    <PackageReference Include="BouncyCastle.Cryptography" Version="2.6.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="KeyGrant.Licensing.Tests" />
+  </ItemGroup>
+
+</Project>
