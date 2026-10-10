@@ -29,8 +29,6 @@ internal sealed class Harness
     private int failReadAt;
     private bool holdNextWrite;
     private Action releaseHeld = () => { };
-    private int replaceAtRead;
-    private StoredState? replacement;
 
     private Harness(StoredState? initial, Options options)
     {
@@ -71,6 +69,14 @@ internal sealed class Harness
     public static Harness Create(StoredState? initial = null, Options? options = null) => new(initial, options ?? new Options());
 
     public static Harness Create(int major) => Create(null, new Options { Major = major });
+
+    /// <summary>How long a call waits for a stuck one before it goes ahead read-only: the default HTTP bound and the lock grace.</summary>
+    public static readonly TimeSpan Grace = LicenseConfig.DefaultHttpTimeout + TimeSpan.FromSeconds(15);
+
+    /// <summary>A fingerprinter whose machine id never reads: only the host-name fingerprint, as an alternate.</summary>
+    public static FuncFingerprinter HostOnly() => new(
+        () => Task.FromResult("unused"),
+        () => Task.FromResult<DeviceIdentity?>(new DeviceIdentity(null, null, ["fp-host"])));
 
     public License License { get; }
 
@@ -182,19 +188,6 @@ internal sealed class Harness
         lock (gate) failReadAt = reads + n;
     }
 
-    /// <summary>
-    /// Another process saves <paramref name="state"/> just before the <paramref name="n"/>th storage read
-    /// from now (1 for the next): that read, and every later one, finds it.
-    /// </summary>
-    public void SavedElsewhereBeforeRead(int n, StoredState state)
-    {
-        lock (gate)
-        {
-            replaceAtRead = reads + n;
-            replacement = state;
-        }
-    }
-
     /// <summary>How many storage reads have been made.</summary>
     public int Reads
     {
@@ -223,7 +216,6 @@ internal sealed class Harness
             lock (h.gate)
             {
                 h.reads += 1;
-                if (h.reads == h.replaceAtRead) h.stored = h.replacement;
                 if (h.hangNextRead)
                 {
                     h.hangNextRead = false;

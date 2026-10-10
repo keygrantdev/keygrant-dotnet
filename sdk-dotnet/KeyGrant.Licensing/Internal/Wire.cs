@@ -1,4 +1,3 @@
-using System.Text.Json;
 using System.Text.Json.Nodes;
 
 namespace KeyGrant.Licensing.Internal;
@@ -71,20 +70,6 @@ internal static class Wire
         if (!Json.TryNumber(Member(json, "trialEndsAt"), out var trialEndsAt)) return null;
         var lease = Json.TryString(Member(json, "lease"), out var ls) ? ls : null;
         return new TrialBody(Json.ToLong(trialStart), Json.ToLong(trialEndsAt), lease);
-    }
-
-    /// <summary>
-    /// A claim's answer, keeping each member only when it is what it should be: the key, the activation
-    /// id and the lease when they are strings, <c>pending</c> when it is <c>true</c>, the error when it is
-    /// a word (a string of at least one character). Members it does not know are ignored, and a body
-    /// that is not an object is nothing.
-    /// </summary>
-    public static ClaimBody ParseClaimBody(JsonNode? json)
-    {
-        string? Text(string name) => Json.TryString(Member(json, name), out var text) ? text : null;
-        var pending = Member(json, "pending") is JsonValue value && value.GetValueKind() == JsonValueKind.True;
-        var error = Text("error");
-        return new ClaimBody(Text("key"), Text("activationId"), Text("lease"), pending, string.IsNullOrEmpty(error) ? null : error);
     }
 
     /// <summary>
@@ -162,10 +147,3 @@ internal static class Wire
 /// <summary>The trial endpoint's answer.</summary>
 internal sealed record TrialBody(long TrialStart, long TrialEndsAt, string? Lease);
 
-/// <summary>A claim's answer (<see cref="Wire.ParseClaimBody"/>): what of each member it can use.</summary>
-/// <param name="Key">The bought key, when a string.</param>
-/// <param name="ActivationId">This device's activation of it, when a string.</param>
-/// <param name="Lease">Its lease, when a string.</param>
-/// <param name="Pending">"Not bought yet": only a <c>pending</c> that is <c>true</c>.</param>
-/// <param name="Error">The answer's error word: only a string of at least one character.</param>
-internal sealed record ClaimBody(string? Key, string? ActivationId, string? Lease, bool Pending, string? Error);

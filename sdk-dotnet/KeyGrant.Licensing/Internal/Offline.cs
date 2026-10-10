@@ -58,24 +58,6 @@ internal sealed record Basis
 
     /// <summary>The server's answer to a trial ask: stamped <c>trialAt</c>.</summary>
     public Stamp? Trial { get; init; }
-
-    /// <summary>
-    /// A save about a purchase secret (its drop, or the wait after a claim): its purchase fields
-    /// (<see cref="StateFields.Purchase"/>) land only while that secret is the one stored, so one another
-    /// process made meanwhile is neither dropped nor stamped by it. A wait carries the
-    /// <see cref="StoredState.PurchaseTokenAt"/> its asker read, and lands only while that is stored too: a
-    /// link handed out again since cleared the wait so that the next status asks at once, and a late answer
-    /// must not start it again. A drop carries none: a spent secret is dead however recently its link was
-    /// handed out.
-    /// </summary>
-    public AboutToken? Purchase { get; init; }
-}
-
-/// <summary>A save about the purchase secret <paramref name="Token"/> (<see cref="Basis.Purchase"/>): a wait names the link stamp its asker read (<paramref name="At"/>), a drop none.</summary>
-internal sealed record AboutToken(string Token, long? At = null)
-{
-    /// <summary>Whether this save is about the secret stored in <paramref name="latest"/>, its link as handed out when its asker read it (<c>At</c>, compared for equality only).</summary>
-    public bool AboutStored(StoredState latest) => latest.PurchaseToken == Token && (At is null || latest.PurchaseTokenAt == At);
 }
 
 /// <summary>
@@ -273,10 +255,8 @@ internal static partial class Offline
     /// A patch merged onto the state as stored now, by what it is based on: an answer or an
     /// activation is stamped <c>verdictAt</c>, a trial answer <c>trialAt</c>; a save about an
     /// activation no longer stored keeps only its trial evidence; an answer older than the stored one
-    /// loses its verdict fields; a trial answer older than the stored one loses its end and lease; a
-    /// save about a purchase secret no longer stored (or, for a wait, one whose link was handed out again
-    /// since) loses its purchase fields; the trial start only ever moves earlier; the kept major of the
-    /// stored activation only ever up.
+    /// loses its verdict fields; a trial answer older than the stored one loses its end and lease; the
+    /// trial start only ever moves earlier; the kept major of the stored activation only ever up.
     /// </summary>
     public static StoredState Merged(StoredState latest, StatePatch patch, Basis? basis = null)
     {
@@ -289,7 +269,6 @@ internal static partial class Offline
         if (state == Superseded.Activation) applied = TrialOnly(applied);
         if (state == Superseded.Answer) applied = WithoutVerdict(applied);
         if (basis.Trial is not null && Outdated(latest.TrialAt, basis.Trial)) applied = applied.Without(StateFields.TrialAnswer);
-        if (basis.Purchase is { } about && !about.AboutStored(latest)) applied = applied.Without(StateFields.Purchase);
 
         var trialStart = Wire.Earliest(latest.TrialStart, applied.ValueOf(StateField.TrialStart) as long?);
         var result = applied.ApplyTo(latest);

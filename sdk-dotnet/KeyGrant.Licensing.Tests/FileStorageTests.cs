@@ -491,40 +491,6 @@ public class FileStorageTests
     }
 
     [Fact]
-    public async Task Behind_a_stuck_call_a_purchase_link_sets_no_file_that_does_not_parse_aside_nor_writes_in_its_place()
-    {
-        var fs = new MemoryFileSystem(new() { [State] = "{\"bad" });
-        var (error, stuck) = await BehindAStuckRead(fs, async license =>
-        {
-            try
-            {
-                await license.PurchaseUrlAsync("https://buy.test/x");
-                return (Exception?)null;
-            }
-            catch (Exception thrown)
-            {
-                return thrown;
-            }
-        });
-        // Read as no state (no secret held), and refused, as a stalled call with none held is.
-        Assert.Contains("has not finished", Assert.IsType<InvalidOperationException>(error).Message);
-        Assert.Empty(fs.Changes);
-        stuck.Release();
-    }
-
-    [Fact]
-    public async Task Behind_a_stuck_call_a_purchase_link_is_made_from_an_older_path_s_secret_without_copying_it()
-    {
-        var legacy = Path.Combine(Path.GetTempPath(), "keygrant-legacy", "sluice.json");
-        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        var fs = new MemoryFileSystem(new() { [legacy] = $"{{\"purchaseToken\":\"{PurchaseUrlTests.Secret}\",\"purchaseTokenAt\":{now}}}" });
-        var (answer, stuck) = await BehindAStuckRead(fs, license => license.PurchaseUrlAsync("https://buy.test/x"), legacy);
-        Assert.Equal($"https://buy.test/x?client_reference_id={PurchaseUrlTests.Reference}", answer);
-        Assert.Empty(fs.Changes);
-        stuck.Release();
-    }
-
-    [Fact]
     public async Task Behind_a_stuck_call_does_not_set_a_file_that_does_not_parse_aside_nor_write_in_its_place()
     {
         var fs = new MemoryFileSystem(new() { [State] = "{\"bad" });

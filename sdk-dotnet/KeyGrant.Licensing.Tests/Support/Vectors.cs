@@ -115,7 +115,6 @@ internal static class Vectors
             Activation = AskedOf(node["activation"]),
             About = node["about"] is { } about ? new About(Str(about["activationId"])) : null,
             Trial = trial is null ? null : new Stamp(Long(trial["at"])!.Value, Long(trial["seen"])),
-            Purchase = node["purchase"] is { } purchase ? new AboutToken(Str(purchase["token"])!, Long(purchase["at"])) : null,
         };
     }
 

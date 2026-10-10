@@ -580,4 +580,17 @@ public class StatusTests
         h.Stored = Holding(h.Sign("KEY", "perpetual", 30 * 24 * 3600));
         Assert.Equal(Licensed("KEY"), await license.StatusAsync());
     }
+
+    [Fact]
+    public async Task A_typed_key_whose_lease_model_is_trial_is_licensed_offline_and_never_reports_a_trial()
+    {
+        // A key issued under a trial model is a licence lease: judged as any other, never as the device's trial.
+        var h = Create();
+        h.Stored = new StoredState { Key = "KEY-1", ActivationId = "act_1", Lease = h.Sign("KEY-1", "trial", 30 * 24 * 3600), CheckedMajor = 1, LastSeen = Now };
+        h.Http.Fail = true;
+        Assert.Equal(new LicenseStatus { State = LicenseState.Licensed, Key = "KEY-1" }, await h.License.StatusAsync());
+        await h.License.LaunchReportSettled.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Empty(h.Http.Calls);
+        Assert.Null(h.Stored!.TrialLease);
+    }
 }

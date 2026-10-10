@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0
+
+- `License.PurchaseUrlAsync` is removed, and the SDK no longer asks for a bought key at `StatusAsync`,
+  `RefreshAsync` or `StartTrialAsync`. To sell from the app, open your Payment Link from your own Buy
+  button; the customer types the key from the delivery email (`ActivateAsync`). A purchase secret an
+  earlier version stored is ignored, and left out the next time the SDK saves its state.
+- `StoredState` no longer has `PurchaseToken`, `PurchaseTokenAt` or `ClaimAskedAt`: a storage adapter or
+  test code that sets them stops compiling, and the same names among its `AdditionalFields` are never written.
+
 ## 0.3.0
 
 - Key sets: `LicenseConfig.PublicJwks` takes the product's public keys (the key that signs its leases, and

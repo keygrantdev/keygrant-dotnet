@@ -6,7 +6,7 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
 
     <PackageId>KeyGrant.Licensing</PackageId>
-    <Version>0.3.0</Version>
+    <Version>0.4.0</Version>
     <Authors>KeyGrant</Authors>
     <Description>KeyGrant licensing for .NET desktop apps: signed leases verified offline, activation, trials and renewals, failing in favour of the paying customer.</Description>
     <PackageTags>licensing;license-key;activation;trial;ed25519;jwt;desktop</PackageTags>

@@ -97,7 +97,7 @@ public class LaunchReportTests
     [Fact]
     public async Task Sends_nothing_from_a_device_whose_own_fingerprint_does_not_read_after_its_stamp()
     {
-        var h = Create(null, new Options { Fingerprint = PickupTests.HostOnly() });
+        var h = Create(null, new Options { Fingerprint = HostOnly() });
         h.Stored = Running(h);
         Assert.Equal(RunningTrial, await h.License.StatusAsync());
         Assert.Equal(Now, h.Stored!.TrialReportedAt);
@@ -201,9 +201,9 @@ public class LaunchReportTests
         stalled.Stored = Running(stalled);
         stalled.HangNextRead();
         _ = stalled.License.StatusAsync();
-        await Eventually.Until(() => time.HasTimerDueIn(PurchaseUrlTests.Grace), "the stuck call's grace");
+        await Eventually.Until(() => time.HasTimerDueIn(Grace), "the stuck call's grace");
         var later = stalled.License.StatusAsync();
-        time.Advance(PurchaseUrlTests.Grace);
+        time.Advance(Grace);
         Assert.Equal(RunningTrial with { Stalled = true }, await later.WaitAsync(TimeSpan.FromSeconds(10)));
         await Settled(stalled);
         Assert.False(stalled.Http.Called("trial"));
@@ -213,25 +213,47 @@ public class LaunchReportTests
     [Fact]
     public async Task Every_answer_parser_ignores_members_it_does_not_know()
     {
-        // Design point 4: activate, validate, trial and claim answers alike.
+        // Activate, validate and trial answers alike.
         JsonObject With(JsonObject answer)
         {
             answer["future"] = new JsonObject { ["nested"] = new JsonArray(1, 2) };
             answer["note"] = "added by a later server";
             return answer;
         }
-        var h = Create(PurchaseUrlTests.Held());
+        var h = Create();
         var lease = h.Sign("KEY-1", "perpetual", 30 * 24 * 3600);
-        h.Http.On("claim", _ => new HttpResult(200, With(new JsonObject { ["key"] = "KEY-1", ["activationId"] = "act_1", ["lease"] = lease })));
-        h.Http.On("validate", _ => new HttpResult(200, With(new JsonObject { ["lease"] = lease })));
         h.Http.On("activate", _ => new HttpResult(200, With(new JsonObject { ["lease"] = lease, ["activationId"] = "act_1" })));
+        h.Http.On("validate", _ => new HttpResult(200, With(new JsonObject { ["lease"] = lease })));
         var licensed = new LicenseStatus { State = LicenseState.Licensed, Key = "KEY-1" };
+        Assert.Equal(ActivateResult.Success, await h.License.ActivateAsync("KEY-1"));
         Assert.Equal(licensed, await h.License.StatusAsync());
         Assert.Equal(licensed, await h.License.RefreshAsync());
-        Assert.Equal(ActivateResult.Success, await h.License.ActivateAsync("KEY-1"));
+        Assert.True(h.Http.Called("validate"));
 
         var trial = Create();
         trial.Http.On("trial", _ => new HttpResult(200, With(new JsonObject { ["trialStart"] = Now, ["trialEndsAt"] = Now + 5 * Day, ["lease"] = trial.TrialLease(Now + 5 * Day) })));
         Assert.Equal(RunningTrial, await trial.License.StartTrialAsync());
+    }
+
+    [Fact]
+    public async Task Is_due_by_the_guarded_clock()
+    {
+        // Reported an hour ago by the device clock, a day and an hour ago by the guarded one (lastSeen a day ahead): due.
+        var h = Create();
+        h.Stored = Running(h) with { TrialReportedAt = Now - 3_600_000, LastSeen = Now + Day };
+        await h.License.StatusAsync();
+        await Settled(h);
+        Assert.Equal(1, h.Http.Count("trial"));
+        Assert.Equal(Now + Day, h.Stored!.TrialReportedAt);
+    }
+
+    [Fact]
+    public async Task Is_stamped_by_the_guarded_clock()
+    {
+        var h = Create();
+        h.Stored = Running(h) with { LastSeen = Now + Day };
+        Assert.Equal(LicenseState.Trial, (await h.License.StatusAsync()).State);
+        Assert.Equal(Now + Day, h.Stored!.TrialReportedAt);
+        await Settled(h);
     }
 }

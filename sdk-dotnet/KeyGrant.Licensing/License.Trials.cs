@@ -45,9 +45,10 @@ public sealed partial class License
         }
     }
 
-    /// <summary><see cref="StartTrialAsync"/>'s trial ask, under the device it read for both its asks (<paramref name="device"/>).</summary>
-    private async Task<LicenseStatus> StartTrialNowAsync(StoredState state, Device device, CancellationToken cancellationToken)
+    /// <summary><see cref="StartTrialAsync"/>'s trial ask, under the device read with an activation's time.</summary>
+    private async Task<LicenseStatus> StartTrialNowAsync(StoredState state, CancellationToken cancellationToken)
     {
+        var device = await DeviceAsync(TimeSpan.FromMilliseconds(MachineId.ActivateTimeoutMs), state.DeviceKind, cancellationToken).ConfigureAwait(false);
         var (_, latest) = await AskTrialAsync(state, device, null, cancellationToken).ConfigureAwait(false);
         // The server's trial even when it could not be saved: kept for this process until a later call saves it.
         return await TrialStatusAsync(latest, EffectiveNow(state), cancellationToken).ConfigureAwait(false);

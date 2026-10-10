@@ -301,9 +301,8 @@ public class LeaseAndWireTests
     [InlineData("https://buy.stripe.com/x?CLIENT_REFERENCE_ID=a", "https://buy.stripe.com/x?CLIENT_REFERENCE_ID=a&client_reference_id=act_1")]
     public void Puts_the_reference_on_a_link_editing_its_query_as_text(string link, string expected)
     {
-        // One link rule for upgradeUrl and purchaseUrl: the query kept as written, not re-encoded as
-        // URLSearchParams would write it.
-        Assert.Equal(expected, Pickup.ReferencedLink(link, "act_1"));
+        // upgradeUrl's link rule: the query kept as written, not re-encoded as URLSearchParams would write it.
+        Assert.Equal(expected, Links.ReferencedLink(link, "act_1"));
     }
 
     [Theory]
@@ -313,7 +312,7 @@ public class LeaseAndWireTests
     public void Percent_encodes_the_reference_as_encodeURIComponent_does(string reference, string encoded)
     {
         var value = System.Text.RegularExpressions.Regex.Unescape(reference);
-        Assert.Equal($"https://buy.test/?client_reference_id={encoded}", Pickup.ReferencedLink("https://buy.test/", value));
+        Assert.Equal($"https://buy.test/?client_reference_id={encoded}", Links.ReferencedLink("https://buy.test/", value));
     }
 
     [Theory]
@@ -322,7 +321,7 @@ public class LeaseAndWireTests
     [InlineData("")]
     public void Refuses_a_link_that_is_not_an_absolute_URL(string link)
     {
-        Assert.Throws<ArgumentException>(() => Pickup.ReferencedLink(link, "act_1"));
+        Assert.Throws<ArgumentException>(() => Links.ReferencedLink(link, "act_1"));
     }
 
     [Fact]

@@ -21,8 +21,8 @@ public partial class ConformanceTests
         "standing", "trialStatuses", "refusalPatches", "leasePatches", "keyedBy", "merges", "guardedNow", "clockCorrections",
         "mapServerError", "refusalOf", "enteredKey", "trimDeviceName", "noAnswer", "parseLeaseBody", "parseTrialBody", "mountinfo",
         "machineIds", "renewals", "validLeaseAsks", "devices", "identities", "savedLastSeen", "leaseStatuses", "trialLeaseStatuses",
-        "entitlementNumbers", "majors", "purchaseUrls", "purchaseTokenKept", "claimDue", "parseClaimBody", "claimOutcomes", "trialReportDue",
-        "purchaseReferences", "claimBodies", "keyIds", "keySets", "grants",
+        "entitlementNumbers", "majors", "referencedLinks", "trialReportDue",
+        "keyIds", "keySets", "grants",
     ];
 
     private static readonly string[] NotGroups = ["$comment", "conventions", "publicJwk", "constants"];
@@ -124,13 +124,7 @@ public partial class ConformanceTests
         Assert.Equal(FileStorage.StaleTempMs, Long(c["STALE_TEMP_MS"]));
         Assert.Equal(FileStorage.UpdateAttempts, Long(c["UPDATE_ATTEMPTS"]));
         Assert.Equal(DeviceFingerprints.UnknownHost, Str(c["UNKNOWN_HOST"]));
-        Assert.Equal(Offline.ClaimWaitMs, Long(c["CLAIM_WAIT_MS"]));
-        Assert.Equal(Offline.ClaimEagerMs, Long(c["CLAIM_EAGER_MS"]));
-        Assert.Equal(Offline.PurchaseTokenMs, Long(c["PURCHASE_TOKEN_MS"]));
         Assert.Equal(Offline.TrialReportMs, Long(c["TRIAL_REPORT_MS"]));
-        Assert.Equal(Pickup.PurchaseReferencePrefix, Str(c["PURCHASE_REFERENCE_PREFIX"]));
-        Assert.Equal(Pickup.MaxClaimFingerprints, Long(c["MAX_CLAIM_FINGERPRINTS"]));
-        Assert.Equal(Pickup.MaxClaimFingerprintLength, Long(c["MAX_CLAIM_FINGERPRINT_LENGTH"]));
     }
 
     [Theory]
@@ -266,7 +260,6 @@ public partial class ConformanceTests
         {
             "LEASED" => Offline.Leased,
             "UNKEYED" => Offline.Unkeyed,
-            "NO_PURCHASE" => Offline.NoPurchase,
             var other => throw new InvalidOperationException($"no patch {other}"),
         };
         AssertJson.Equal(v["expect"], PatchJson(patch), name);
@@ -392,6 +385,14 @@ public partial class ConformanceTests
         if (reading.Id is not null) read["id"] = reading.Id;
         AssertJson.Equal(v["expect"], read, name);
     }
+
+    /// <summary>The offline check of a lease a 200 carried, as a vector gives it (the lease itself is not verified); null for none.</summary>
+    private static LeaseCheck? CheckOf(JsonNode? check) => check switch
+    {
+        null => null,
+        var c when Bool(c["ok"]) == true => LeaseCheck.Licensed(Bool(c["test"])!.Value, ClaimsParser.Parse(c["claims"]!.ToJsonString())!),
+        var c => LeaseCheck.Refused(Enum.Parse<LeaseCheckFailure>(Str(c["reason"])!.Replace("-", "", StringComparison.Ordinal), ignoreCase: true)),
+    };
 
     [Theory]
     [MemberData(nameof(RenewalCases))]

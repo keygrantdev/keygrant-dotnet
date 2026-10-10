@@ -21,9 +21,6 @@ internal enum StateField
     DeviceKind,
     VerdictAt,
     Rev,
-    PurchaseToken,
-    PurchaseTokenAt,
-    ClaimAskedAt,
     TrialReportedAt,
 }
 
@@ -149,15 +146,12 @@ internal static class StateFields
     /// <summary>The trial evidence, which belongs to the device, not to any activation.</summary>
     public static readonly IReadOnlyList<StateField> Trial = [StateField.TrialStart, StateField.TrialEndsAt, StateField.TrialLease, StateField.TrialAt];
 
-    /// <summary>The purchase token and its stamps, which a save about a token writes only while it is stored (<see cref="Basis.Purchase"/>).</summary>
-    public static readonly IReadOnlyList<StateField> Purchase = [StateField.PurchaseToken, StateField.PurchaseTokenAt, StateField.ClaimAskedAt];
-
     public static Type TypeOf(StateField field) => field switch
     {
-        StateField.Key or StateField.ActivationId or StateField.Lease or StateField.TrialLease or StateField.PurchaseToken => typeof(string),
+        StateField.Key or StateField.ActivationId or StateField.Lease or StateField.TrialLease => typeof(string),
         StateField.TrialStart or StateField.TrialEndsAt or StateField.TrialAt or StateField.LastSeen
             or StateField.BackoffSince or StateField.BackoffMs or StateField.VerdictAt or StateField.Rev
-            or StateField.PurchaseTokenAt or StateField.ClaimAskedAt or StateField.TrialReportedAt => typeof(long),
+            or StateField.TrialReportedAt => typeof(long),
         StateField.CheckedMajor or StateField.KeptMajor or StateField.RefusedMajor => typeof(int),
         StateField.Refused => typeof(Refusal),
         StateField.RefusedFor => typeof(IReadOnlyList<string>),
@@ -191,9 +185,6 @@ internal static class StateFields
         StateField.DeviceKind => "deviceKind",
         StateField.VerdictAt => "verdictAt",
         StateField.Rev => "rev",
-        StateField.PurchaseToken => "purchaseToken",
-        StateField.PurchaseTokenAt => "purchaseTokenAt",
-        StateField.ClaimAskedAt => "claimAskedAt",
         StateField.TrialReportedAt => "trialReportedAt",
         _ => throw new ArgumentOutOfRangeException(nameof(field)),
     };
@@ -218,9 +209,6 @@ internal static class StateFields
         StateField.DeviceKind => state.DeviceKind,
         StateField.VerdictAt => state.VerdictAt,
         StateField.Rev => state.Rev,
-        StateField.PurchaseToken => state.PurchaseToken,
-        StateField.PurchaseTokenAt => state.PurchaseTokenAt,
-        StateField.ClaimAskedAt => state.ClaimAskedAt,
         StateField.TrialReportedAt => state.TrialReportedAt,
         _ => throw new ArgumentOutOfRangeException(nameof(field)),
     };
@@ -268,9 +256,6 @@ internal static class StateFields
         StateField.DeviceKind => state with { DeviceKind = (DeviceKind?)value },
         StateField.VerdictAt => state with { VerdictAt = (long?)value },
         StateField.Rev => state with { Rev = (long?)value },
-        StateField.PurchaseToken => state with { PurchaseToken = (string?)value },
-        StateField.PurchaseTokenAt => state with { PurchaseTokenAt = (long?)value },
-        StateField.ClaimAskedAt => state with { ClaimAskedAt = (long?)value },
         StateField.TrialReportedAt => state with { TrialReportedAt = (long?)value },
         _ => throw new ArgumentOutOfRangeException(nameof(field)),
     };

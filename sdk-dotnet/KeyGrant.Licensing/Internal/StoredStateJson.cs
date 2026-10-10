@@ -30,6 +30,8 @@ internal static class StoredStateJson
         // JSON.parse keeps the last of a repeated name; a name .NET cannot hold is dropped.
         foreach (var (name, raw) in top.Members)
         {
+            // What an earlier version stored and this one retired: not read, so never written back.
+            if (Retired.Contains(name)) continue;
             if (!raw.Holdable)
             {
                 // Nested deeper than any field this SDK types: kept as its exact text, written back as it was.
@@ -150,15 +152,12 @@ internal static class StoredStateJson
         if (Has("deviceKind", state.DeviceKind)) writer.WriteString("deviceKind", Names.Of(state.DeviceKind!.Value));
         if (Has("verdictAt", state.VerdictAt)) writer.WriteNumber("verdictAt", state.VerdictAt!.Value);
         if (Has("rev", state.Rev)) writer.WriteNumber("rev", state.Rev!.Value);
-        if (Has("purchaseToken", state.PurchaseToken)) writer.WriteString("purchaseToken", state.PurchaseToken);
-        if (Has("purchaseTokenAt", state.PurchaseTokenAt)) writer.WriteNumber("purchaseTokenAt", state.PurchaseTokenAt!.Value);
-        if (Has("claimAskedAt", state.ClaimAskedAt)) writer.WriteNumber("claimAskedAt", state.ClaimAskedAt!.Value);
         if (Has("trialReportedAt", state.TrialReportedAt)) writer.WriteNumber("trialReportedAt", state.TrialReportedAt!.Value);
         if (extra is not null)
         {
             foreach (var (name, value) in extra)
             {
-                if (IsKnown(name)) continue;
+                if (IsKnown(name) || Retired.Contains(name)) continue;
                 writer.WritePropertyName(name);
                 writer.WriteRawValue(value.GetRawText(), skipInputValidation: true);
             }
@@ -167,7 +166,7 @@ internal static class StoredStateJson
         {
             foreach (var (name, text) in deep)
             {
-                if (IsKnown(name) || (extra?.ContainsKey(name) ?? false)) continue;
+                if (IsKnown(name) || Retired.Contains(name) || (extra?.ContainsKey(name) ?? false)) continue;
                 writer.WritePropertyName(name);
                 writer.WriteRawValue(text, skipInputValidation: true);
             }
@@ -179,8 +178,15 @@ internal static class StoredStateJson
     {
         "key", "activationId", "lease", "trialStart", "trialEndsAt", "trialLease", "trialAt", "lastSeen",
         "checkedMajor", "keptMajor", "backoffSince", "backoffMs", "refused", "refusedMajor", "refusedFor",
-        "deviceKind", "verdictAt", "rev", "purchaseToken", "purchaseTokenAt", "claimAskedAt", "trialReportedAt",
+        "deviceKind", "verdictAt", "rev", "trialReportedAt",
     };
+
+    /// <summary>
+    /// What an earlier version stored to buy from the app with no key typed (its purchase secret and the two
+    /// stamps beside it). Retired: not read, not even as a field this SDK does not know, and never
+    /// written, whatever <see cref="StoredState.AdditionalFields"/> holds, so the next save clears them.
+    /// </summary>
+    private static readonly HashSet<string> Retired = new(StringComparer.Ordinal) { "purchaseToken", "purchaseTokenAt", "claimAskedAt" };
 
     public static bool IsKnown(string name) => Known.Contains(name);
 

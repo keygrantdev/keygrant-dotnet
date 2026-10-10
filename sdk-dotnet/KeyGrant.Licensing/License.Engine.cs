@@ -54,11 +54,9 @@ public sealed partial class License
     /// one STARTED running. Storage, fingerprint and registry adapters are not bounded (a storage write
     /// cut short could be left half-written), so a call stuck on one is left to finish on its own, and
     /// the calls behind it go ahead READ-ONLY (<c>readOnly</c> true): they answer from what is stored,
-    /// with no ask and no write, for as long as any call before them is still unsettled. A call that may
-    /// make a second, shorter request (a trial start: a claim, then its trial ask) holds the calls behind
-    /// it <paramref name="extra"/> longer.
+    /// with no ask and no write, for as long as any call before them is still unsettled.
     /// </summary>
-    private Task<T> Serial<T>(Func<bool, Task<T>> work, CancellationToken cancellationToken, TimeSpan extra = default)
+    private Task<T> Serial<T>(Func<bool, Task<T>> work, CancellationToken cancellationToken)
     {
         var slot = new Slot();
         Slot previous;
@@ -67,10 +65,10 @@ public sealed partial class License
             previous = last;
             last = slot;
         }
-        return RunInTurnAsync(previous, slot, work, extra, cancellationToken);
+        return RunInTurnAsync(previous, slot, work, cancellationToken);
     }
 
-    private async Task<T> RunInTurnAsync<T>(Slot previous, Slot slot, Func<bool, Task<T>> work, TimeSpan extra, CancellationToken cancellationToken)
+    private async Task<T> RunInTurnAsync<T>(Slot previous, Slot slot, Func<bool, Task<T>> work, CancellationToken cancellationToken)
     {
         try
         {
@@ -93,7 +91,7 @@ public sealed partial class License
             readOnly = writing > 0;
             if (!readOnly) writing += 1;
         }
-        var grace = new GraceTimer(httpTimeout + LockGrace + extra, time);
+        var grace = new GraceTimer(httpTimeout + LockGrace, time);
         slot.Started.SetResult(grace.Over);
         try
         {
@@ -305,7 +303,7 @@ public sealed partial class License
 
     /// <summary>
     /// The ids of the keys this build carries (<c>kid</c>, each key's thumbprint), in the order configured:
-    /// sent with each activation, validate and claim, so the product's dashboard can count the devices whose
+    /// sent with each activation and validate, so the product's dashboard can count the devices whose
     /// builds do not carry a key yet.
     /// </summary>
     private JsonArray KidsJson() => new(verifier.KeyIdList.Select(k => (JsonNode?)JsonValue.Create(k)).ToArray());

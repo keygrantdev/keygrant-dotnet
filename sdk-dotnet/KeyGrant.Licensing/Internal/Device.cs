@@ -34,8 +34,8 @@ internal sealed record Device
 internal static class Devices
 {
     /// <summary>
-    /// The fingerprint an activation is made under (a typed key's, or a bought key's claim), and what it
-    /// hashes; or null: an activation answers network for the app to retry, and a claim is not asked.
+    /// The fingerprint an activation is made under, and what it hashes; or null: an activation answers
+    /// network for the app to retry.
     /// The device's own; when even an activation's time cannot tell it: on an install already keyed by a
     /// machine id, nothing; otherwise the host name, so a machine whose id never reads in time can still
     /// activate (its first check-in that reads the id moves the seat to it).

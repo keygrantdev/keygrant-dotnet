@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using KeyGrant.Licensing.Internal;
 using KeyGrant.Licensing.Tests.Support;
 using static KeyGrant.Licensing.Tests.Support.Harness;
@@ -13,7 +12,7 @@ public class MajorTests
     /// <summary>A lease for KEY / act_1 covering majors up to <paramref name="major"/>.</summary>
     private static string LeaseUpTo(Harness h, long major) => h.SignLease(new LeaseInput { Sub = "KEY", Major = major });
 
-    // The majors vectors replay null, 0, 1, 2, 7 and -3 (ConformanceTests.Purchase.cs); these are an int's ends.
+    // The majors vectors replay null, 0, 1, 2, 7 and -3 (ConformanceTests.Later.cs); these are an int's ends.
     [Theory]
     [InlineData(int.MinValue, 1)]
     [InlineData(int.MaxValue, int.MaxValue)]
@@ -32,7 +31,7 @@ public class MajorTests
     }
 
     [Fact]
-    public async Task A_0_x_build_sends_major_1_with_its_activation_its_validate_and_its_claim()
+    public async Task A_0_x_build_sends_major_1_with_its_activation_and_its_validate()
     {
         var h = Create(0);
         var lease = LeaseUpTo(h, 1);
@@ -43,10 +42,5 @@ public class MajorTests
         Assert.Equal(1, h.Http.BodyOf("activate")["major"]!.GetValue<int>());
         Assert.Equal(1, h.Http.BodyOf("validate")["major"]!.GetValue<int>());
         Assert.Equal(1, h.Stored!.CheckedMajor);
-
-        var buyer = Create(PurchaseUrlTests.Held(), new Options { Major = 0 });
-        buyer.Http.Answer("claim", 200, new JsonObject { ["pending"] = true });
-        await buyer.License.StatusAsync();
-        Assert.Equal(1, buyer.Http.BodyOf("claim")["major"]!.GetValue<int>());
     }
 }

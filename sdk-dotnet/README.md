@@ -3,8 +3,7 @@
 KeyGrant licensing for .NET desktop apps (WPF, WinForms, Avalonia, MAUI, console): a licence is a
 signed lease (a JWT, EdDSA / Ed25519) the app verifies **offline** against the product's public key.
 The app only talks to KeyGrant to activate, to renew a lease near or past its end, to report a
-newer major version, to pick up a key the customer bought from the app, and to report a running
-trial's launch (at most once a day, in the background).
+newer major version, and to report a running trial's launch (at most once a day, in the background).
 
 The rule every line serves: **licensing failure fails in favour of the paying customer.** No network,
 an outage, a timeout, a 5xx, a 429, an unrecognised 4xx, an answer that cannot be used, or a licence
@@ -57,9 +56,6 @@ if (!released.Released) ShowSeatMayStillBeHeld(); // KeyGrant did not confirm it
 
 // A trial, begun once (StatusAsync reports a running trial's launch by itself):
 status = await license.StartTrialAsync();       // State Trial, TrialDaysLeft, TrialEndsAt
-
-// A Buy button for a customer with no key, picked up on return with nothing typed (below):
-string? buyUrl = await license.PurchaseUrlAsync("https://buy.stripe.com/your-link");
 ```
 
 ### Console
@@ -172,63 +168,21 @@ saves the day's stamp first), so the dashboard's trial funnel sees the trial com
 that. `StartTrialAsync()` still re-syncs the trial when called: a change to the trial's length or
 entitlements reaches a running trial there.
 
-## Buying from the app: no key to type
+## Buying from the app
 
-Give a customer who holds no key a Buy button that opens your Stripe Payment Link through
-`PurchaseUrlAsync`. When they come back to the app, the key they bought is picked up and this device
-activated on it, with nothing typed:
+Give a customer who holds no key a Buy button that opens your Stripe Payment Link. The checkout emails
+them their key, and they type it into the app:
 
 ```csharp
 using System.Diagnostics;
 
-var checkoutOpened = false;
-var url = await license.PurchaseUrlAsync("https://buy.stripe.com/your-link");
-if (url is not null) // null while a key is held: use UpgradeUrlAsync for an upgrade
-{
-    Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
-    checkoutOpened = true;
-}
-
-// When the customer is back (the window is activated again, say), and only while a checkout is
-// open: RefreshAsync on a licensed install validates online every time.
-if (checkoutOpened && (await license.StatusAsync()).State != LicenseState.Licensed)
-{
-    var status = await license.RefreshAsync(); // Licensed once the checkout has gone through
-    if (status.State == LicenseState.Licensed) checkoutOpened = false;
-}
+Process.Start(new ProcessStartInfo("https://buy.stripe.com/your-link") { UseShellExecute = true });
+// Once they have the key from the email:
+ActivateResult result = await license.ActivateAsync(keyTextBox.Text);
 ```
 
-- **How:** `PurchaseUrlAsync` keeps a one-time secret for this install (256 random bits from the
-  platform's CSPRNG, never the device's fingerprint) and sets the link's `client_reference_id` to a
-  hash of it, so a link that leaks (browser history, a screenshot) claims nothing. The checkout keeps
-  that reference on the key it mints, and the SDK asks for the key with the secret (the claim): at
-  once on `RefreshAsync()` or `StartTrialAsync()`, and from `StatusAsync()` at most every five minutes
-  for a day after the link (after that, `RefreshAsync()` or `StartTrialAsync()` still ask). Until the
-  key is bought, the status is what it was (the trial, or unlicensed). Once it is, the device is
-  activated on it exactly as `ActivateAsync(key)` would, and licensed.
-- **Calling it again** hands out the same secret's link, so the key bought through either link is
-  picked up (paying twice buys two keys; the second comes by email). A secret is dropped 30 days after
-  the last link, once its key is picked up, when a key is activated or the device deactivated, or when
-  the server answers that it never will be picked up (another device took it, or the product's
-  "Converts in place" switch is off: the customer then types the key from the delivery email). A drop
-  is this device's alone: it revokes nothing on the server.
-- **It throws** `ArgumentException` when the link is not an absolute URL (before anything is read),
-  and throws when the licence file cannot be read or the secret cannot be saved (a link whose secret is
-  lost could never be picked up). Behind a call that has not finished, a held secret's link is handed
-  out as it is, and with none held it throws `InvalidOperationException`.
-- **Turn the product's "Converts in place" switch on** once your app uses `PurchaseUrlAsync`: it is
-  off by default, and until it is on every pickup is refused and the customer types the key from the
-  delivery email. Know the trade before you do: whoever opens a checkout owns its pickup. Your Payment
-  Link is public, so anyone can add a `client_reference_id` of their own to it and get buyers to pay
-  through their copy of the link; the key bought that way is picked up by the link's maker, not the
-  buyer. A link from the app is the buyer's own; a leaked one claims nothing, as it carries only a hash
-  of the app's secret. A planted pickup shows in the key's history, and you can free the seat for the
-  buyer.
-- **What the claim sends:** the secret, the fingerprint a first activation would use (the device's
-  own; at `StartTrialAsync()` the host name when the machine id does not read), and every fingerprint
-  the run read (its own first, then the host name and any other alternates, held to its device or not),
-  keeping those of 1 to 200 characters and at most 4, so the server knows this device again on a
-  repeated claim.
+For a customer who already holds a key, `UpgradeUrlAsync(link)` adds this install's activation to the
+link, so an upgrade sale finds the key it upgrades (below).
 
 ## What each status means
 
@@ -287,12 +241,6 @@ other PC out at its next check-in.
    before the product's key was rotated, or one signed to end short of the trial's end), so the server
    can sign it again: asked as `StartTrialAsync()` asks, bounded to 5 s, and its answer saved as that
    saves one. Until a trial lease this build can verify comes back, it is `Expired`/`Trial`;
-5. with no key held and a purchase secret held (`PurchaseUrlAsync`), for the key bought with it, for a
-   day after the link: bounded to 5 s, the device read for 2 s, only under the device's own
-   fingerprint (when it does not read, nothing is asked and nothing saved), and asked again 5 minutes
-   after an answer that brought no key. `RefreshAsync()` asks at once, under `HttpTimeout`, until the
-   secret's 30 days are up; `StartTrialAsync()` asks at once, bounded to 5 s, under the one device read
-   it makes for both its asks (10 s), the host name allowed when the machine id does not read;
 
 and in each case only once the wait after the last ask is over: **1 minute** after an ask nothing
 answered (offline), **1 hour** after one the server answered without a lease (a refusal, a 5xx, a 429)
@@ -304,16 +252,13 @@ awaited and its answer not read. Since it runs beside the calls, a custom `IHttp
 `IFingerprinter` may be called from more than one thread at once (the defaults may).
 
 Calls on one `License` run one at a time. A call waits for the one before it, but at most its
-`HttpTimeout` + 15 s from when that one started (+ 5 s more after a `StartTrialAsync`, which may make
-a claim and then its trial ask); then it runs read-only (`Stalled`).
+`HttpTimeout` + 15 s from when that one started; then it runs read-only (`Stalled`).
 
 Every call but `UpgradeUrlAsync` takes an optional `CancellationToken`. A call cancelled while it waits
 its turn throws `OperationCanceledException` and steps out of the queue. Once it runs, cancelling
 `StatusAsync`, `RefreshAsync` or `StartTrialAsync` only stops it waiting on the server or the device: it
 answers from what the device holds, as when nothing answers, and records nothing of the ask it cut
-short (a claim included: the secret is kept, with no wait). `PurchaseUrlAsync` can be cancelled only
-while it waits its turn: once it runs, it only reads and saves. A licensed answer never becomes an
-exception. `ActivateAsync` and `DeactivateAsync` throw
+short. A licensed answer never becomes an exception. `ActivateAsync` and `DeactivateAsync` throw
 `OperationCanceledException` until the server has answered, and save nothing.
 
 ## Embedding the public keys
@@ -357,7 +302,7 @@ builds carrying both; once they are out, the product *switches*, and those build
 signed after it. Embed the whole set each time you build, so a build always carries the key that signs
 now and the one staged next. A `PublicJwk` alone is a set of one, as before.
 
-Each activation, validate and claim reports the ids of the keys the build carries (`kids`), so the
+Each activation and validate reports the ids of the keys the build carries (`kids`), so the
 dashboard can count the devices still on builds without the staged key before you switch.
 
 ## `DeviceHold`: holding a licence to its device
@@ -476,9 +421,9 @@ the moment of saving) makes saves from several processes safe.
 
 `await license.UpgradeUrlAsync(paymentLink)` returns the upgrade offer's payment link with this
 device's ACTIVATION id as `client_reference_id` (never the key), or null without an activation; a
-checkout through it extends the key the customer holds instead of minting another. The link is built
-as `PurchaseUrlAsync` builds its own: the link's other parameters and its fragment kept as written,
-any `client_reference_id` already on it replaced.
+checkout through it extends the key the customer holds instead of minting another. The link's other
+parameters and its fragment are kept as written, and any `client_reference_id` already on it is
+replaced.
 
 ## Building and testing
 
@@ -497,18 +442,16 @@ no-answer statuses, lease and trial bodies), mountinfo, the machine-id reads, wh
 saves and says, when a status asks on a valid lease, who a device is (install memory, `DeviceHold`),
 what the default fingerprinter answers for each machine-id reading, the status a stored lease gives with
 no verdict, a trial's status from its start and its trial lease (entitlements included in every status),
-the bits of the double each entitlement number reads as, and, for buying from the app: the major a build
-runs as, the purchase link, how long a secret is held, when a claim falls due, a claim's body and what
-its answer saves and says, and when a running trial reports its launch, the reference a link carries for
-a secret, and the body a claim sends. That is every group and every vector but the Windows `machineIds`
+the bits of the double each entitlement number reads as, the major a build runs as, the link
+`UpgradeUrlAsync` builds, and when a running trial reports its launch. That is every group and every vector but the Windows `machineIds`
 cases, which script `reg.exe`'s output, which this SDK does not parse (it reads the registry), and the
 `majors` cases holding a fraction, which an `int` major cannot hold. A group the file holds that the
 harness does not answer fails the suite.
 
 Its behaviour tests cover activation, offline status, renewal, refusals and their waits, outages that
 never lock out, the clock guard, trials, deactivation, `DeviceHold`, storage that cannot be read, calls
-stuck behind one another, entitlements on every status that carries them, the purchase link and the
-pickup, the launch report, a 0.x major, the file storage (atomic writes, temp recovery, corrupt files,
+stuck behind one another, entitlements on every status that carries them, the launch report, a 0.x
+major, the file storage (atomic writes, temp recovery, corrupt files,
 revision conflicts between two processes) and the machine-id readers.
 
 `SystemTests` drive the real readers and writers on the system the suite runs on: the registry, a
@@ -539,7 +482,7 @@ Behaviour is the Electron SDK's; these are the differences, each on purpose:
 | `HttpTimeout` must be positive and at most a day. | .NET timers take no more; an unbounded request would defeat the bound. |
 | `Major` is an `int`: a fractional major cannot be configured (the reference cuts one to its whole number), so the `majors` vectors holding a fraction are skipped. A negative one runs as 1, as in the reference. | Idiomatic C#; a version's major is a whole number. |
 | A payment link is read by `System.Uri`, whose normal form differs from the WHATWG parser's in two ways that keep the URL the same: a percent-encoded letter, digit or `-._~` in the query is written as that character, and `'` in the query is left as it is (WHATWG writes `%27`). | The link is read as the platform's URL parser reads it; the query is then edited as text as the reference edits it. |
-| `PurchaseUrlAsync` throws `ArgumentException` for a link that is not an absolute URL, and `InvalidOperationException` behind a call that has not finished with no secret held, where the reference rejects with a `TypeError` and an `Error`. | .NET convention. |
+| `UpgradeUrlAsync` throws `ArgumentException` for a link that is not an absolute URL (while the device holds an activation), where the reference rejects with a `TypeError`. | .NET convention. |
 | The launch report runs on a thread-pool thread (`Task.Run`), so the HTTP adapter and the fingerprinter may be called from two threads at once; the tests wait for it through an internal `LaunchReportSettled`. | An SDK with blocking I/O sends it on a thread of its own, never on the caller's. |
 | State files are read leniently: a known field of the wrong type (a refusal word from a later SDK, a number written as text, a string holding an escaped lone surrogate) reads as absent, a byte-order mark is forgiven, and fractional milliseconds are floored. What such a field held is written back as it was, unless a save sets or clears it; unknown fields are kept and written back, as the reference does. A field NAME holding a lone surrogate is dropped. | The reference keeps whatever `JSON.parse` gives, so a damaged field misbehaves later; reading it as absent keeps the rest of the licence, and writing it back keeps what an Electron build of the same product stored. The reference sets a file with a byte-order mark aside as corrupt. |
 | JSON is read to any depth `JSON.parse` reads, in one pass, but a member nested more than 64 levels deep is never held as a `JsonElement`: a state file's is kept as its text and written back (it is not in `StoredState.AdditionalFields`), a server answer's is left out of the body, and a lease's unknown claim is never read, nor a member of `ent` that is not a flag, a number or a text (dropped, however deep; any other claim the schema checks cannot nest, so one that deep is `bad-claims` there too). | System.Text.Json's `JsonDocument` takes time that grows with the square of the nesting: a state file with a member 100 000 levels deep would take seconds to read, and a million minutes, which would hang a status at launch. Nothing the SDK reads nests. |

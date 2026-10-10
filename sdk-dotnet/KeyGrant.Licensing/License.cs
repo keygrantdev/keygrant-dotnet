@@ -5,15 +5,13 @@ namespace KeyGrant.Licensing;
 
 /// <summary>
 /// Client-side KeyGrant licensing for a desktop app. Verifies signed JWT leases OFFLINE and only contacts
-/// the server to activate, to renew a lease nearing its end or past it, to tell it of a newer major, to
-/// pick up a key bought through <see cref="PurchaseUrlAsync"/>, or to report a running trial's launch (at
-/// most once a day), so an outage never locks out a paying customer while the lease is live (the grace
+/// the server to activate, to renew a lease nearing its end or past it, to tell it of a newer major, or to
+/// report a running trial's launch (at most once a day), so an outage never locks out a paying customer while the lease is live (the grace
 /// window is the lease's life). Licensing failure fails in favour of the paying customer: no network, a
 /// 5xx, a 429, an ambiguous 4xx or an unusable answer never refuses a valid lease; only the server's
 /// explicit verdicts do. Trial start is anti-reset (only moves earlier) and a monotonic clock guard stops a
-/// clock put back from reviving an expired lease. A customer with no key can buy from the app
-/// (<see cref="PurchaseUrlAsync"/>) and is licensed on return with nothing typed, and a running trial
-/// reports its launch at most once a day, in the background.
+/// clock put back from reviving an expired lease. A running trial reports its launch at most once a day, in
+/// the background.
 /// <para>
 /// Calls on one instance run one at a time. Create ONE <see cref="License"/> per app process and share it.
 /// The launch report runs on a thread-pool thread beside the calls, so the HTTP adapter and the
@@ -86,7 +84,7 @@ public sealed partial class License
     /// <c>client_reference_id</c>, or null when the device holds no activated licence. Send a customer
     /// there to buy an upgrade for the key they hold. The activation id, never the licence key: a URL
     /// lands in browser history and logs, and the activation id grants nothing on its own. The link's
-    /// own parameters and fragment are kept as written, as <see cref="PurchaseUrlAsync"/> keeps them.
+    /// own parameters and fragment are kept as written.
     /// </summary>
     /// <param name="paymentLinkUrl">The upgrade offer's payment link.</param>
     /// <returns>The link for this device, or null.</returns>
@@ -97,36 +95,7 @@ public sealed partial class License
         // Read-only: this runs outside the one-at-a-time order, beside any call.
         var state = await LoadAsync(readOnly: true).ConfigureAwait(false);
         if (string.IsNullOrEmpty(state.Key) || string.IsNullOrEmpty(state.ActivationId)) return null;
-        return Pickup.ReferencedLink(paymentLinkUrl, state.ActivationId);
-    }
-
-    /// <summary>
-    /// <paramref name="paymentLinkUrl"/> with a PURCHASE REFERENCE as its <c>client_reference_id</c>, or
-    /// null while the device holds a key (any key: use <see cref="UpgradeUrlAsync"/>, or the plain link).
-    /// Send a customer with no key there to buy: the checkout keeps the reference on the key it mints, and
-    /// once they are back the SDK asks for that key (at once on <see cref="RefreshAsync"/> or
-    /// <see cref="StartTrialAsync"/>, and from <see cref="StatusAsync"/> for a day after the link),
-    /// activates this device on it and answers licensed, with nothing typed.
-    /// <para>
-    /// The reference is a hash of a one-time secret (256 random bits from the platform's CSPRNG, never the
-    /// fingerprint) that stays on the device and is sent only in that ask, so a link that leaks claims
-    /// nothing. The secret is made the first time, kept, and its link handed out again by every later
-    /// call; it is dropped 30 days after the last one, or once a key bought with it is picked up. Behind a
-    /// call that has not settled, a held secret's link is handed out as it is, and with none held the call
-    /// throws.
-    /// </para>
-    /// </summary>
-    /// <param name="paymentLinkUrl">The payment link the customer buys through.</param>
-    /// <param name="cancellationToken">Throws <see cref="OperationCanceledException"/> while the call waits its turn.</param>
-    /// <returns>The link for this install, or null while a key is held.</returns>
-    /// <exception cref="ArgumentException">The link is not an absolute URL (thrown before anything is read).</exception>
-    /// <exception cref="InvalidOperationException">A call before it has not settled and no secret is held.</exception>
-    /// <remarks>Also throws when the state cannot be read, or the secret cannot be saved: a link whose secret is not kept could never be picked up.</remarks>
-    public async Task<string?> PurchaseUrlAsync(string paymentLinkUrl, CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(paymentLinkUrl);
-        Pickup.AbsoluteLink(paymentLinkUrl);
-        return await Serial(readOnly => PurchaseLinkAsync(paymentLinkUrl, readOnly), cancellationToken).ConfigureAwait(false);
+        return Links.ReferencedLink(paymentLinkUrl, state.ActivationId);
     }
 
     /// <summary>
@@ -156,9 +125,7 @@ public sealed partial class License
     /// <summary>
     /// The licence's status. Offline-first: it answers from what the device holds and asks the server only
     /// when it should (a lease near or past its end, a newer major on an open lease, a stored refusal to
-    /// heal; with no key held, for a day after a <see cref="PurchaseUrlAsync"/> link, the key bought
-    /// through it, 5 minutes after the last time it was not there yet), once the wait after the last ask is
-    /// over. A running trial reports its launch at most once a day, in the background and never awaited:
+    /// heal), once the wait after the last ask is over. A running trial reports its launch at most once a day, in the background and never awaited:
     /// the app need not call <see cref="StartTrialAsync"/> on every launch. Never throws for storage: a
     /// state that cannot be read just now is <see cref="LicenseState.Unknown"/> (reason
     /// <see cref="LicenseReason.Storage"/>), and a save that fails leaves the answer standing. An app
@@ -182,9 +149,7 @@ public sealed partial class License
     /// <summary>
     /// Begin (or re-sync) a trial for this device. As <see cref="StatusAsync"/> for storage: unknown
     /// when the state cannot be read, and the server's trial when it cannot be saved. Offline, it
-    /// answers what local trial evidence there is. With no key held and a purchase secret held
-    /// (<see cref="PurchaseUrlAsync"/>), the key bought with it is asked for first, at once: bought, it is
-    /// the answer (licensed), and no trial is asked. The device is read once for both asks.
+    /// answers what local trial evidence there is.
     /// </summary>
     /// <param name="cancellationToken">Throws <see cref="OperationCanceledException"/> while the call still waits its turn; once it runs, stops waiting on the server or the device and answers from what the device holds (nothing is recorded of an ask it cut short). Never turns an answer into an exception.</param>
     /// <returns>The trial's status.</returns>
@@ -194,20 +159,11 @@ public sealed partial class License
             {
                 var state = await LoadForStatusAsync(readOnly).ConfigureAwait(false);
                 if (state is null) return readOnly ? Unreadable with { Stalled = true } : Unreadable;
-                if (!readOnly)
-                {
-                    // The device read once, given an activation's time, for both asks.
-                    var device = await DeviceAsync(TimeSpan.FromMilliseconds(MachineId.ActivateTimeoutMs), state.DeviceKind, cancellationToken).ConfigureAwait(false);
-                    // A key bought through PurchaseUrlAsync is asked for first; bought, it is the answer, and no trial is asked.
-                    var picked = await PickUpAsync(state, new PickupAsk(Start: true, Force: true, device), cancellationToken).ConfigureAwait(false);
-                    return picked.Status ?? await StartTrialNowAsync(picked.State, device, cancellationToken).ConfigureAwait(false);
-                }
+                if (!readOnly) return await StartTrialNowAsync(state, cancellationToken).ConfigureAwait(false);
                 // From storage behind a call that has not finished, and saying so.
                 return (await TrialStatusAsync(state, EffectiveNow(state), cancellationToken).ConfigureAwait(false)) with { Stalled = true };
             },
-            cancellationToken,
-            // It may make two requests (a claim bounded as a status check is, then the trial ask): the calls behind it wait that much longer.
-            TimeSpan.FromMilliseconds(Wire.StatusCheckTimeoutMs));
+            cancellationToken);
 
     private async Task<ActivateResult> ActivateNowAsync(string key, CancellationToken cancellationToken)
     {
@@ -250,9 +206,7 @@ public sealed partial class License
         var evaluated = await EvaluateAsync(lease, now, entered, activationId, kind, cancellationToken).ConfigureAwait(false);
         if (!evaluated.Ok) return ActivateResult.Failure(LicenseError.InvalidLease);
 
-        // As a bought key's claim saves one (Pickup.ActivationPatch), the purchase secret cleared too: else
-        // a later deactivate would let a pending pickup activate the device again.
-        var patch = Pickup.ActivationPatch(entered, activationId, lease, evaluated.Claims!, now, major, kind);
+        var patch = Offline.ActivationPatch(entered, activationId, lease, evaluated.Claims!, now, major, kind);
         await SaveAsync(patch, null, new Basis { Activation = new Asked(askedAt, activationId, stored.VerdictAt) }).ConfigureAwait(false);
         return ActivateResult.Success;
     }
@@ -287,7 +241,7 @@ public sealed partial class License
             }
         }
         // Stamped, so that an answer to an older ask is not saved over it.
-        var patch = Offline.Unkeyed.With(Offline.NoPurchase);
+        var patch = Offline.Unkeyed;
         patch.Set(StateField.VerdictAt, EffectiveNow(state));
         await SaveAsync(patch).ConfigureAwait(false);
         return new DeactivateResult(released);
@@ -327,12 +281,9 @@ public sealed partial class License
         {
             return await LicenseStatusAsync(state, state.Lease, now, forceOnline, readOnly, cancellationToken).ConfigureAwait(false);
         }
-        // No licence held: a key bought through PurchaseUrlAsync is picked up first, never read-only.
-        var picked = readOnly ? new PickedUp(null, state) : await PickUpAsync(state, new PickupAsk(Start: false, Force: forceOnline), cancellationToken).ConfigureAwait(false);
-        if (picked.Status is { } bought) return bought;
-        if (picked.State.TrialStart is not null)
+        if (state.TrialStart is not null)
         {
-            return await TrialStatusAsync(picked.State, now, cancellationToken, new TrialAsk(forceOnline, readOnly)).ConfigureAwait(false);
+            return await TrialStatusAsync(state, now, cancellationToken, new TrialAsk(forceOnline, readOnly)).ConfigureAwait(false);
         }
         return Unlicensed;
     }

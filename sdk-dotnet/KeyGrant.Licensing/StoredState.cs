@@ -7,7 +7,8 @@ namespace KeyGrant.Licensing;
 /// <summary>
 /// The licence state kept on the device (the default storage's <c>&lt;product&gt;.json</c>). Its JSON
 /// (<see cref="ToJson"/>, <see cref="FromJson"/>) is the Electron SDK's, field for field: camelCase,
-/// absent fields omitted, and fields this SDK does not know kept as they were. All times are
+/// absent fields omitted, and fields this SDK does not know kept as they were, but for the few an
+/// earlier version stored and this one retired, which are neither read nor written. All times are
 /// milliseconds since the Unix epoch.
 /// </summary>
 [JsonConverter(typeof(StoredStateJsonConverter))]
@@ -74,24 +75,6 @@ public sealed record StoredState
     public long? Rev { get; init; }
 
     /// <summary>
-    /// The one-time purchase SECRET <see cref="License.PurchaseUrlAsync"/> keeps (43 URL-safe characters:
-    /// 256 random bits), held while no key is, until a key bought with it is picked up, the server answers
-    /// that it never will be, or 30 days have passed since its link was last handed out. Sent nowhere but
-    /// in the claim: a checkout link carries only a hash of it.
-    /// </summary>
-    public string? PurchaseToken { get; init; }
-
-    /// <summary>When (guarded device clock) the purchase secret's link was last handed out: its 30-day bound, and the day a status still asks, run from here.</summary>
-    public long? PurchaseTokenAt { get; init; }
-
-    /// <summary>
-    /// When (device clock) the claim was last asked and brought no key back: a status asks again on its
-    /// own once 5 minutes have passed. Cleared by <see cref="License.PurchaseUrlAsync"/>, so the first
-    /// status after a link asks.
-    /// </summary>
-    public long? ClaimAskedAt { get; init; }
-
-    /// <summary>
     /// When (guarded device clock) a running trial last reported its launch (sent in the background by a
     /// status): at most once a day, a trial answer (<see cref="TrialAt"/>) counting as a report.
     /// </summary>
@@ -100,7 +83,8 @@ public sealed record StoredState
     /// <summary>
     /// Fields this SDK does not know (written by another SDK or a later version), kept as they were
     /// and written back. One nested more than 64 levels deep is kept, and written back, too, as its text
-    /// only: holding it here would take time growing with the square of its depth.
+    /// only: holding it here would take time growing with the square of its depth. A retired field's
+    /// name here is never written.
     /// </summary>
     public IReadOnlyDictionary<string, JsonElement>? AdditionalFields { get; init; }
 
@@ -144,9 +128,6 @@ public sealed record StoredState
             && DeviceKind == other.DeviceKind
             && VerdictAt == other.VerdictAt
             && Rev == other.Rev
-            && PurchaseToken == other.PurchaseToken
-            && PurchaseTokenAt == other.PurchaseTokenAt
-            && ClaimAskedAt == other.ClaimAskedAt
             && TrialReportedAt == other.TrialReportedAt
             && SameFields(AdditionalFields, other.AdditionalFields)
             && SameText(DeepFields, other.DeepFields);
@@ -166,7 +147,6 @@ public sealed record StoredState
         hash.Add(Refused);
         hash.Add(VerdictAt);
         hash.Add(Rev);
-        hash.Add(PurchaseToken);
         return hash.ToHashCode();
     }
 
