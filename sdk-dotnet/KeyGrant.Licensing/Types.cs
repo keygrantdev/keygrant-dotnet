@@ -1,5 +1,4 @@
 using System.Collections.ObjectModel;
-using System.Globalization;
 using System.Text;
 
 namespace KeyGrant.Licensing;
@@ -28,7 +27,7 @@ public enum LicenseState
     Unlicensed,
 
     /// <summary>
-    /// The licence file could not be read just now (an antivirus scan holding it, say), reason
+    /// The state file could not be read just now (an antivirus scan holding it, say), reason
     /// <see cref="LicenseReason.Storage"/>. Nothing is known either way: keep running as before, ask
     /// again shortly, and never show the activation screen for it.
     /// </summary>
@@ -43,20 +42,23 @@ public enum LicenseReason
     /// <summary>The key was revoked or expired, or this device was released.</summary>
     Revoked,
 
-    /// <summary>The build is NEWER than the key covers: the customer needs an upgrade.</summary>
+    /// <summary>The build is NEWER than the key (or, from a licence file, the file) covers: the customer needs an upgrade.</summary>
     Upgrade,
 
-    /// <summary>The build is OLDER than the key's lowest version: update the app.</summary>
+    /// <summary>The build is OLDER than the key's (or, from a licence file, the file's) lowest version: update the app.</summary>
     Outdated,
 
     /// <summary>The lease ran out while the server could not be reached.</summary>
     Offline,
 
-    /// <summary>The lease is not for this licence at all (another key, activation or product, or a bad signature).</summary>
+    /// <summary>
+    /// The lease is not for this licence at all (another key, activation or product, or a bad signature), or the
+    /// stored licence file is not one (the state file was edited).
+    /// </summary>
     Tampered,
 
     /// <summary>
-    /// The licence was activated on another device (this machine changed, or the licence file was
+    /// The licence was activated on another device (this machine changed, or the state file was
     /// copied from another one): activate again on this one.
     /// </summary>
     Device,
@@ -64,14 +66,22 @@ public enum LicenseReason
     /// <summary>The trial has ended.</summary>
     Trial,
 
-    /// <summary>The licence file could not be read just now (state <see cref="LicenseState.Unknown"/>).</summary>
+    /// <summary>The state file could not be read just now (state <see cref="LicenseState.Unknown"/>).</summary>
     Storage,
 
     /// <summary>
     /// The lease is signed by a key this build does not carry (<see cref="LicenseConfig.PublicJwks"/>). Asked
-    /// online, the server signs one with the key it uses now, which a build carrying that key verifies.
+    /// online, the server signs one with the key it uses now, which a build carrying that key verifies. A stored
+    /// licence file signed by such a key needs the app's update that carries it, or the same licence's file
+    /// signed again.
     /// </summary>
     UnknownKey,
+
+    /// <summary>
+    /// The stored offline licence file is one this build lists as revoked
+    /// (<see cref="LicenseConfig.RevokedLicenseFiles"/>).
+    /// </summary>
+    RevokedFile,
 }
 
 /// <summary>
@@ -153,77 +163,6 @@ public sealed class MissingEntitlementException : Exception
 }
 
 /// <summary>
-/// One thing a licence grants beyond the base product, as its lease signs it (a member of the lease's
-/// <c>ent</c> claim): exactly one of a flag, a number or a text. <c>{"edition": "pro", "seats": 5,
-/// "beta": true}</c> is three entitlements: a text, a number and a flag.
-/// <para>
-/// Read one through the accessor of the kind you expect, which is null for the other kinds:
-/// <c>status.Entitlements.TryGetValue("edition", out var edition) &amp;&amp; edition.Text == "pro"</c>.
-/// Two are equal when they are the same kind holding the same value. Numbers are doubles, as JSON and
-/// JavaScript read them, so <c>5</c> and <c>5.0</c> are the same entitlement. Immutable.
-/// </para>
-/// </summary>
-public sealed class Entitlement : IEquatable<Entitlement>
-{
-    /// <summary>A flag.</summary>
-    /// <param name="flag">Its value.</param>
-    public Entitlement(bool flag) => Flag = flag;
-
-    /// <summary>A number.</summary>
-    /// <param name="number">Its value.</param>
-    public Entitlement(double number) => Number = number;
-
-    /// <summary>A text.</summary>
-    /// <param name="text">Its value.</param>
-    /// <exception cref="ArgumentNullException"><paramref name="text"/> is null.</exception>
-    public Entitlement(string text)
-    {
-        ArgumentNullException.ThrowIfNull(text);
-        Text = text;
-    }
-
-    /// <summary>The flag, when this entitlement is one (<c>"beta": true</c>); otherwise null.</summary>
-    public bool? Flag { get; }
-
-    /// <summary>The number, when this entitlement is one (<c>"seats": 5</c>); otherwise null.</summary>
-    public double? Number { get; }
-
-    /// <summary>The text, when this entitlement is one (<c>"edition": "pro"</c>); otherwise null.</summary>
-    public string? Text { get; }
-
-    /// <summary>Whether <paramref name="other"/> is the same kind holding the same value (texts compared ordinally).</summary>
-    /// <param name="other">The entitlement to compare with.</param>
-    /// <returns>True when they are equal.</returns>
-    public bool Equals(Entitlement? other) =>
-        other is not null && Flag == other.Flag && Nullable.Equals(Number, other.Number) && string.Equals(Text, other.Text, StringComparison.Ordinal);
-
-    /// <inheritdoc/>
-    public override bool Equals(object? obj) => Equals(obj as Entitlement);
-
-    /// <inheritdoc/>
-    public override int GetHashCode() => HashCode.Combine(Flag, Number, Text);
-
-    /// <summary>The value as text: a flag as <c>true</c> or <c>false</c>, a number in the invariant culture, a text as it is.</summary>
-    /// <returns>The value as text.</returns>
-    public override string ToString() =>
-        Flag is { } flag ? (flag ? "true" : "false")
-        : Number is { } number ? number.ToString("R", CultureInfo.InvariantCulture)
-        : Text!;
-
-    /// <summary>Whether two entitlements are equal (<see cref="Equals(Entitlement?)"/>).</summary>
-    /// <param name="left">One.</param>
-    /// <param name="right">The other.</param>
-    /// <returns>True when they are equal, or both null.</returns>
-    public static bool operator ==(Entitlement? left, Entitlement? right) => left is null ? right is null : left.Equals(right);
-
-    /// <summary>Whether two entitlements differ.</summary>
-    /// <param name="left">One.</param>
-    /// <param name="right">The other.</param>
-    /// <returns>True when they are not equal.</returns>
-    public static bool operator !=(Entitlement? left, Entitlement? right) => !(left == right);
-}
-
-/// <summary>
 /// What <see cref="License.StatusAsync"/> answers.
 /// </summary>
 public sealed record LicenseStatus
@@ -239,7 +178,11 @@ public sealed record LicenseStatus
     /// <summary>Why, for <see cref="LicenseState.Invalid"/>, <see cref="LicenseState.Expired"/> and <see cref="LicenseState.Unknown"/>.</summary>
     public LicenseReason? Reason { get; init; }
 
-    /// <summary>The licence key, when the device holds one.</summary>
+    /// <summary>
+    /// The licence key, when the device holds one; on a status from a licence file that is licensed, or
+    /// invalid with <see cref="LicenseReason.RevokedFile"/>, <see cref="LicenseReason.Upgrade"/> or
+    /// <see cref="LicenseReason.Outdated"/>, the key the file records.
+    /// </summary>
     public string? Key { get; init; }
 
     /// <summary>Whole days left of a trial, rounded up; absent when the trial's end is not known.</summary>
@@ -250,7 +193,7 @@ public sealed record LicenseStatus
 
     /// <summary>
     /// True when the licence is a TEST licence: one the developer made to exercise their app, which
-    /// lapses on its own within 30 days. It licenses the app like any other; check this to refuse
+    /// lapses on its own within 30 days (an offline licence file made for one never does: it is a file). It licenses the app like any other; check this to refuse
     /// test licences in a release build.
     /// </summary>
     public bool Test { get; init; }
@@ -259,7 +202,7 @@ public sealed record LicenseStatus
     /// What the licence grants beyond the base product, by name, as its lease signs them (the
     /// <c>ent</c> claim): <c>status.Entitlements.TryGetValue("edition", out var edition) &amp;&amp;
     /// edition.Text == "pro"</c>. On a <see cref="LicenseState.Licensed"/> status, from the licence's
-    /// lease; on a <see cref="LicenseState.Trial"/> status, from the trial's. EMPTY on every other
+    /// lease, or the stored offline licence file's <c>ent</c>; on a <see cref="LicenseState.Trial"/> status, from the trial's. EMPTY on every other
     /// status, and when the lease grants none. Never null (null given is read as none).
     /// <para>
     /// A member of the claim that is not a flag, a number or a text is left out, never the licence.
@@ -283,6 +226,21 @@ public sealed record LicenseStatus
     public bool Stalled { get; init; }
 
     /// <summary>
+    /// <see cref="LicenseSource.File"/> when the status rests on a stored offline licence file
+    /// (<see cref="License.ImportLicenseFileAsync(ReadOnlyMemory{byte}, CancellationToken)"/>), licensed or
+    /// not; null for a key's lease, a trial and no licence. A file licence has no seat to deactivate: offer
+    /// "Remove licence file" (<see cref="License.RemoveLicenseFileAsync"/>) instead.
+    /// </summary>
+    public LicenseSource? Source { get; init; }
+
+    /// <summary>
+    /// Who the stored offline licence file is licensed to, as it signs it: show it ("Licensed to Ada
+    /// Lovelace"). On a file status that is licensed, or invalid with <see cref="LicenseReason.RevokedFile"/>,
+    /// <see cref="LicenseReason.Upgrade"/> or <see cref="LicenseReason.Outdated"/>; null otherwise.
+    /// </summary>
+    public LicensedTo? LicensedTo { get; init; }
+
+    /// <summary>
     /// Whether <paramref name="other"/> says the same: every member equal, and the
     /// <see cref="Entitlements"/> compared by CONTENT (the same names, each with an equal
     /// <see cref="Entitlement"/>). A record compares a dictionary member by reference, which would make
@@ -299,6 +257,8 @@ public sealed record LicenseStatus
         && TrialEndsAt == other.TrialEndsAt
         && Test == other.Test
         && Stalled == other.Stalled
+        && Source == other.Source
+        && LicensedTo == other.LicensedTo
         && SameEntitlements(Entitlements, other.Entitlements);
 
     /// <summary>A hash agreeing with <see cref="Equals(LicenseStatus?)"/>: the entitlements' taken without regard to their order.</summary>
@@ -307,7 +267,7 @@ public sealed record LicenseStatus
     {
         var granted = 0;
         foreach (var (name, entitlement) in Entitlements) granted ^= HashCode.Combine(name, entitlement);
-        return HashCode.Combine(State, Reason, Key, TrialDaysLeft, TrialEndsAt, Test, Stalled, granted);
+        return HashCode.Combine(HashCode.Combine(State, Reason, Key, TrialDaysLeft, TrialEndsAt, Test, Stalled, granted), Source, LicensedTo);
     }
 
     /// <summary>
@@ -331,7 +291,9 @@ public sealed record LicenseStatus
             builder.Append(first ? " " : ", ").Append(name).Append(" = ").Append(entitlement);
             first = false;
         }
-        builder.Append(" }, Stalled = ").Append(Stalled);
+        builder.Append(" }, Stalled = ").Append(Stalled)
+            .Append(", Source = ").Append(Source)
+            .Append(", LicensedTo = ").Append(LicensedTo);
         return true;
     }
 

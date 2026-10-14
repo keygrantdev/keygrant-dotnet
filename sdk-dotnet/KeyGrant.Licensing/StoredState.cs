@@ -81,6 +81,13 @@ public sealed record StoredState
     public long? TrialReportedAt { get; init; }
 
     /// <summary>
+    /// The offline licence file this device holds (its token), as
+    /// <see cref="License.ImportLicenseFileAsync(ReadOnlyMemory{byte}, CancellationToken)"/> stored it. Verified
+    /// again on every status, so an edit to it licenses nothing. Never a key file: importing one activates its key.
+    /// </summary>
+    public string? LicenseFile { get; init; }
+
+    /// <summary>
     /// Fields this SDK does not know (written by another SDK or a later version), kept as they were
     /// and written back. One nested more than 64 levels deep is kept, and written back, too, as its text
     /// only: holding it here would take time growing with the square of its depth. A retired field's
@@ -129,6 +136,7 @@ public sealed record StoredState
             && VerdictAt == other.VerdictAt
             && Rev == other.Rev
             && TrialReportedAt == other.TrialReportedAt
+            && LicenseFile == other.LicenseFile
             && SameFields(AdditionalFields, other.AdditionalFields)
             && SameText(DeepFields, other.DeepFields);
     }

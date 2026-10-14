@@ -153,6 +153,7 @@ internal static class StoredStateJson
         if (Has("verdictAt", state.VerdictAt)) writer.WriteNumber("verdictAt", state.VerdictAt!.Value);
         if (Has("rev", state.Rev)) writer.WriteNumber("rev", state.Rev!.Value);
         if (Has("trialReportedAt", state.TrialReportedAt)) writer.WriteNumber("trialReportedAt", state.TrialReportedAt!.Value);
+        if (Has("licenseFile", state.LicenseFile)) writer.WriteString("licenseFile", state.LicenseFile);
         if (extra is not null)
         {
             foreach (var (name, value) in extra)
@@ -178,7 +179,7 @@ internal static class StoredStateJson
     {
         "key", "activationId", "lease", "trialStart", "trialEndsAt", "trialLease", "trialAt", "lastSeen",
         "checkedMajor", "keptMajor", "backoffSince", "backoffMs", "refused", "refusedMajor", "refusedFor",
-        "deviceKind", "verdictAt", "rev", "trialReportedAt",
+        "deviceKind", "verdictAt", "rev", "trialReportedAt", "licenseFile",
     };
 
     /// <summary>

@@ -96,6 +96,20 @@ internal sealed class LeaseVerifier
     /// <summary>The ids of the keys in the set, in its order: what a check-in reports as <c>kids</c>.</summary>
     public IReadOnlyList<string> KeyIdList => keys.Select(k => k.Kid).ToList();
 
+    /// <summary>
+    /// Whether the set holds a key whose id is <paramref name="kid"/> (matched exactly) and
+    /// <paramref name="signature"/> is its Ed25519 signature over <paramref name="data"/>; null when the set
+    /// holds no such key. Only that key is tried.
+    /// </summary>
+    public bool? SignedByNamed(string kid, byte[] data, byte[] signature)
+    {
+        foreach (var (held, key) in keys)
+        {
+            if (held == kid) return SignatureHolds(key, data, signature);
+        }
+        return null;
+    }
+
     /// <summary>Verify <paramref name="token"/> at <paramref name="nowMs"/>. Never throws.</summary>
     public VerifyResult Verify(string token, long nowMs)
     {
@@ -141,7 +155,7 @@ internal sealed class LeaseVerifier
     /// UTF-8 decoded as <c>TextDecoder</c> decodes it: a malformed sequence becomes U+FFFD, and a leading
     /// byte-order mark is dropped.
     /// </summary>
-    private static string Utf8Text(byte[] bytes)
+    public static string Utf8Text(byte[] bytes)
     {
         var text = Encoding.UTF8.GetString(bytes);
         return text.Length > 0 && text[0] == (char)0xFEFF ? text[1..] : text;
@@ -153,16 +167,24 @@ internal sealed class LeaseVerifier
     /// <c>{"alg":"EdDSA","typ":"JWT","kid":"&lt;kid&gt;"}</c>, <c>&lt;kid&gt;</c> 1 to 64 characters of the
     /// base64url alphabet. Any other header names no key. It is matched as bytes, never parsed.
     /// </summary>
-    private static string? KeyIdOf(string header)
+    private static string? KeyIdOf(string header) => NamedKeyId(header, NamedHeaderStart);
+
+    /// <summary>
+    /// The key id a header names when it is, byte for byte, canonical base64url of
+    /// <c>&lt;start&gt;&lt;kid&gt;"}</c>, <c>&lt;kid&gt;</c> 1 to 64 characters of the base64url alphabet; null
+    /// for any other header. Matched as bytes, never parsed. A lease's header starts
+    /// <c>{"alg":"EdDSA","typ":"JWT","kid":"</c>, a licence file's <c>{"alg":"EdDSA","typ":"kglicense+jwt","kid":"</c>.
+    /// </summary>
+    public static string? NamedKeyId(string header, string start)
     {
         var bytes = Base64Url.Decode(header);
         if (bytes is null) return null;
         // Each byte as one character: a byte past ASCII matches nothing below.
         var text = Encoding.Latin1.GetString(bytes);
         // Long enough for both ends apart: `..."kid":"}` ends with `"}` only through the start's own quote.
-        if (text.Length < NamedHeaderStart.Length + NamedHeaderEnd.Length) return null;
-        if (!text.StartsWith(NamedHeaderStart, StringComparison.Ordinal) || !text.EndsWith(NamedHeaderEnd, StringComparison.Ordinal)) return null;
-        var kid = text[NamedHeaderStart.Length..^NamedHeaderEnd.Length];
+        if (text.Length < start.Length + NamedHeaderEnd.Length) return null;
+        if (!text.StartsWith(start, StringComparison.Ordinal) || !text.EndsWith(NamedHeaderEnd, StringComparison.Ordinal)) return null;
+        var kid = text[start.Length..^NamedHeaderEnd.Length];
         return kid.Length is >= 1 and <= 64 && kid.All(IsBase64UrlChar) ? kid : null;
     }
 

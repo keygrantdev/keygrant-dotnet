@@ -22,6 +22,7 @@ internal enum StateField
     VerdictAt,
     Rev,
     TrialReportedAt,
+    LicenseFile,
 }
 
 /// <summary>
@@ -148,7 +149,7 @@ internal static class StateFields
 
     public static Type TypeOf(StateField field) => field switch
     {
-        StateField.Key or StateField.ActivationId or StateField.Lease or StateField.TrialLease => typeof(string),
+        StateField.Key or StateField.ActivationId or StateField.Lease or StateField.TrialLease or StateField.LicenseFile => typeof(string),
         StateField.TrialStart or StateField.TrialEndsAt or StateField.TrialAt or StateField.LastSeen
             or StateField.BackoffSince or StateField.BackoffMs or StateField.VerdictAt or StateField.Rev
             or StateField.TrialReportedAt => typeof(long),
@@ -186,6 +187,7 @@ internal static class StateFields
         StateField.VerdictAt => "verdictAt",
         StateField.Rev => "rev",
         StateField.TrialReportedAt => "trialReportedAt",
+        StateField.LicenseFile => "licenseFile",
         _ => throw new ArgumentOutOfRangeException(nameof(field)),
     };
 
@@ -210,6 +212,7 @@ internal static class StateFields
         StateField.VerdictAt => state.VerdictAt,
         StateField.Rev => state.Rev,
         StateField.TrialReportedAt => state.TrialReportedAt,
+        StateField.LicenseFile => state.LicenseFile,
         _ => throw new ArgumentOutOfRangeException(nameof(field)),
     };
 
@@ -257,6 +260,7 @@ internal static class StateFields
         StateField.VerdictAt => state with { VerdictAt = (long?)value },
         StateField.Rev => state with { Rev = (long?)value },
         StateField.TrialReportedAt => state with { TrialReportedAt = (long?)value },
+        StateField.LicenseFile => state with { LicenseFile = (string?)value },
         _ => throw new ArgumentOutOfRangeException(nameof(field)),
     };
 }

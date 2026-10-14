@@ -168,6 +168,14 @@ internal static class Vectors
         if (status.TrialEndsAt is { } ends) json["trialEndsAt"] = ends;
         if (status.Test) json["test"] = true;
         if (status.Entitlements.Count > 0) json["entitlements"] = EntitlementsJson(status.Entitlements);
+        if (status.Source is { } source) json["source"] = Names.Of(source);
+        if (status.LicensedTo is { } to)
+        {
+            var licensedTo = new JsonObject();
+            if (to.Name is not null) licensedTo["name"] = to.Name;
+            if (to.Email is not null) licensedTo["email"] = to.Email;
+            json["licensedTo"] = licensedTo;
+        }
         if (status.Stalled) json["stalled"] = true;
         return json;
     }

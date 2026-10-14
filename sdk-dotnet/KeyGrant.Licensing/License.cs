@@ -50,6 +50,7 @@ public sealed partial class License
         deviceHold = config.DeviceHold;
         time = config.TimeProvider ?? TimeProvider.System;
         verifier = new LeaseVerifier(KeySetOf(config).Select(jwk => jwk.KeyBytes()));
+        revokedFiles = RevokedOf(config);
         // TRUNCATED, because the integrating app supplies it: the activate endpoint bounds every
         // string it takes, and a long name would turn a first activation into a 400.
         deviceName = Wire.TrimToLength(config.DeviceName, Wire.MaxDeviceName);
@@ -266,6 +267,10 @@ public sealed partial class License
     /// </summary>
     private async Task<LicenseStatus> StatusNowAsync(StoredState state, bool forceOnline, bool readOnly, CancellationToken cancellationToken)
     {
+        // A stored offline licence file that licenses this build wins, offline, with no ask and no write;
+        // one that does not answers only when no key path and no running trial does.
+        var file = FileStatus(state);
+        if (file?.State == LicenseState.Licensed) return file;
         var now = EffectiveNow(state);
         // A device refusal stands only for the device it was given for: who this is.
         var device = state.Refused == Refusal.Device
@@ -281,11 +286,17 @@ public sealed partial class License
         {
             return await LicenseStatusAsync(state, state.Lease, now, forceOnline, readOnly, cancellationToken).ConfigureAwait(false);
         }
-        if (state.TrialStart is not null)
-        {
-            return await TrialStatusAsync(state, now, cancellationToken, new TrialAsk(forceOnline, readOnly)).ConfigureAwait(false);
-        }
-        return Unlicensed;
+        return await TrialOrFileAsync(state, now, file, new TrialAsk(forceOnline, readOnly), cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// With no key to answer: a trial this device started while it runs, else a stored file that does not
+    /// license this build (why is the news), else the trial that has ended, else unlicensed.
+    /// </summary>
+    private async Task<LicenseStatus> TrialOrFileAsync(StoredState state, long now, LicenseStatus? file, TrialAsk ask, CancellationToken cancellationToken)
+    {
+        var trial = state.TrialStart is not null ? await TrialStatusAsync(state, now, cancellationToken, ask).ConfigureAwait(false) : null;
+        return trial?.State == LicenseState.Trial ? trial : file ?? trial ?? Unlicensed;
     }
 
     /// <summary>

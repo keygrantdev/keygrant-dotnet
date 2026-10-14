@@ -57,7 +57,34 @@ internal static class Names
         LicenseReason.Trial => "trial",
         LicenseReason.Storage => "storage",
         LicenseReason.UnknownKey => "unknown-key",
+        LicenseReason.RevokedFile => "revoked-file",
         _ => throw new ArgumentOutOfRangeException(nameof(reason)),
+    };
+
+    public static string Of(LicenseFileError error) => error switch
+    {
+        LicenseFileError.Malformed => "malformed",
+        LicenseFileError.NotALicenseFile => "not-a-license-file",
+        LicenseFileError.BadSignature => "bad-signature",
+        LicenseFileError.UnknownKey => "unknown-key",
+        LicenseFileError.WrongProduct => "wrong-product",
+        LicenseFileError.RevokedFile => "revoked-file",
+        LicenseFileError.Upgrade => "upgrade",
+        LicenseFileError.Outdated => "outdated",
+        _ => throw new ArgumentOutOfRangeException(nameof(error)),
+    };
+
+    public static string Of(LicenseFileKind kind) => kind switch
+    {
+        LicenseFileKind.Key => "key",
+        LicenseFileKind.Offline => "offline",
+        _ => throw new ArgumentOutOfRangeException(nameof(kind)),
+    };
+
+    public static string Of(LicenseSource source) => source switch
+    {
+        LicenseSource.File => "file",
+        _ => throw new ArgumentOutOfRangeException(nameof(source)),
     };
 
     public static string Of(LicenseError error) => error switch

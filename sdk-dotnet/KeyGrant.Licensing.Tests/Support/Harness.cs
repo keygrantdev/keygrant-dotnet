@@ -88,12 +88,22 @@ internal sealed class Harness
 
     public TimeProvider Time { get; }
 
-    /// <summary>Another build of the app on this device: the same storage and server, another major.</summary>
-    public License LicenseFor(int major, IFingerprinter? fingerprint = null) => new(new LicenseConfig
+    /// <summary>
+    /// Another build of the app on this device: the same storage and server, another major; another
+    /// fingerprinter, denylist of licence files (<paramref name="revoked"/>) or key set (<paramref name="keys"/>,
+    /// the harness's key when none) when given.
+    /// </summary>
+    public License LicenseFor(
+        int major,
+        IFingerprinter? fingerprint = null,
+        IReadOnlyList<string>? revoked = null,
+        IReadOnlyList<PublicJwk>? keys = null) => new(new LicenseConfig
     {
         Product = Product,
         ApiBaseUrl = "https://api.test/",
-        PublicJwk = Signer.Jwk,
+        PublicJwk = keys is null ? Signer.Jwk : null,
+        PublicJwks = keys,
+        RevokedLicenseFiles = revoked,
         Major = major,
         Adapters = fingerprint is null ? Adapters : new LicenseAdapters
         {

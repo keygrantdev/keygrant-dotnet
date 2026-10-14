@@ -350,10 +350,12 @@ public class EntitlementsTests
         Test = true,
         Stalled = true,
         Entitlements = Pro(),
+        Source = LicenseSource.File,
+        LicensedTo = new LicensedTo("Ada Lovelace", "ada@example.com"),
     };
 
     /// <summary>Every member of a status, each of which the theory below changes on its own.</summary>
-    private static readonly string[] MemberNames = { "State", "Reason", "Key", "TrialDaysLeft", "TrialEndsAt", "Test", "Stalled", "Entitlements" };
+    private static readonly string[] MemberNames = { "State", "Reason", "Key", "TrialDaysLeft", "TrialEndsAt", "Test", "Stalled", "Entitlements", "Source", "LicensedTo" };
 
     public static TheoryData<string> Members => new(MemberNames);
 
@@ -373,6 +375,8 @@ public class EntitlementsTests
             "Test" => status with { Test = false },
             "Stalled" => status with { Stalled = false },
             "Entitlements" => status with { Entitlements = new Dictionary<string, Entitlement>(Pro()) { ["edition"] = new("studio") } },
+            "Source" => status with { Source = null },
+            "LicensedTo" => status with { LicensedTo = new LicensedTo("Ada Lovelace", null) },
             _ => throw new ArgumentOutOfRangeException(nameof(member), member, "not a member of LicenseStatus this theory changes"),
         };
         Assert.False(status.Equals(other), $"{member}: equal");
@@ -401,14 +405,14 @@ public class EntitlementsTests
     {
         Assert.Equal(
             "LicenseStatus { State = Licensed, Reason = , Key = SLUICE-ENTL-ENTL-ENTL-ENTL, TrialDaysLeft = , TrialEndsAt = , Test = False, "
-                + "Entitlements = { beta = false, edition = pro, seats = 5 }, Stalled = False }",
+                + "Entitlements = { beta = false, edition = pro, seats = 5 }, Stalled = False, Source = , LicensedTo =  }",
             LicensedPro.ToString());
         var trial = new LicenseStatus { State = LicenseState.Trial, TrialDaysLeft = 5, TrialEndsAt = 1_757_432_000_000, Test = true, Stalled = true };
         Assert.Equal(
-            "LicenseStatus { State = Trial, Reason = , Key = , TrialDaysLeft = 5, TrialEndsAt = 1757432000000, Test = True, Entitlements = { }, Stalled = True }",
+            "LicenseStatus { State = Trial, Reason = , Key = , TrialDaysLeft = 5, TrialEndsAt = 1757432000000, Test = True, Entitlements = { }, Stalled = True, Source = , LicensedTo =  }",
             trial.ToString());
         Assert.Equal(
-            "LicenseStatus { State = Invalid, Reason = Revoked, Key = K, TrialDaysLeft = , TrialEndsAt = , Test = False, Entitlements = { }, Stalled = False }",
+            "LicenseStatus { State = Invalid, Reason = Revoked, Key = K, TrialDaysLeft = , TrialEndsAt = , Test = False, Entitlements = { }, Stalled = False, Source = , LicensedTo =  }",
             new LicenseStatus { State = LicenseState.Invalid, Reason = LicenseReason.Revoked, Key = "K" }.ToString());
     }
 }

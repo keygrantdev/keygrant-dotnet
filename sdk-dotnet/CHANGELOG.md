@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.5.0
+
+- Licence files: `License.ImportLicenseFileAsync(content)` takes a `.kglicense` file's content (bytes, or
+  text in an overload; never a path) and verifies it offline. A key file activates its key, as
+  `ActivateAsync(key)` would. An offline licence file is stored and licenses the app with no network,
+  ever: `StatusAsync()` answers it with `Source = LicenseSource.File` and `LicensedTo`, before any key or
+  trial, and `RefreshAsync()` asks nothing for it. It answers an `ImportLicenseFileResult` (`Ok`, `Kind`,
+  `LicensedTo`, `Error`, `ActivateError`). `RemoveLicenseFileAsync()` drops it; `DeactivateAsync()`
+  leaves it.
+- `LicenseConfig.RevokedLicenseFiles` lists the ids of files this build refuses: a stored one reads as
+  `Invalid` with the new reason `LicenseReason.RevokedFile`. A `switch` over every `LicenseReason` has
+  one more case to handle.
+- `LicenseStatus` has `Source` and `LicensedTo` (null on every status not from a file), and they count in
+  its equality and its `ToString()`; `StoredState` has `LicenseFile`, the stored offline file's token.
+- `LicenseFileFormat` holds the extension (`.kglicense`), the media type and the most a file may be, and
+  the types `LicenseFileKind`, `LicenseFileError`, `LicenseSource` and `LicensedTo` are new.
+- `Entitlement` moved to a file of its own; nothing about it changed.
+
 ## 0.4.0
 
 - `License.PurchaseUrlAsync` is removed, and the SDK no longer asks for a bought key at `StatusAsync`,

@@ -66,7 +66,7 @@ switch (status.State)
 {
     case LicenseState.Licensed:
     case LicenseState.Trial:
-    case LicenseState.Unknown:   // the licence file is busy just now: keep running
+    case LicenseState.Unknown:   // the state file is busy just now: keep running
         RunTheApp();
         break;
     default:
@@ -148,6 +148,7 @@ it does not deadlock a UI thread that blocks on it; awaiting it is still the rig
 | `DeviceName` | A label for this device in the customer's device list; cut to 120 characters. |
 | `DeviceHold` | Whether a licence is held to the device it was activated on (default `true`). See below. |
 | `HttpTimeout` | How long a request may take before it is abandoned (default 15 s; at most a day). The SDK keeps it whatever the HTTP adapter does. An adapter's token is cancelled only when the SDK gives up on its call (its bound passed, or the caller stopped waiting), never after it answered: an answer stands, whatever the token's callbacks do. |
+| `RevokedLicenseFiles` | The ids of licence files this build refuses (an offline file that leaked), matched exactly; copied when the `License` is made. A null among them throws `ArgumentException`. |
 | `Adapters` | Overrides for `Storage`, `Registry`, `Clock`, `Fingerprint` and `Http`; any left null uses the default. |
 | `TimeProvider` | What the SDK's timers run on (default `TimeProvider.System`); for tests. |
 
@@ -168,6 +169,88 @@ saves the day's stamp first), so the dashboard's trial funnel sees the trial com
 that. `StartTrialAsync()` still re-syncs the trial when called: a change to the trial's length or
 entitlements reaches a running trial there.
 
+## Licence files: drag and drop
+
+A licence can come as a file (`.kglicense`) the customer drops onto the app or opens from its licence
+screen. A **key file** carries their key: importing it activates the key online, exactly as typing it
+would. An **offline licence file** licenses the app with no network at all, for good, on machines that
+never connect; it has no seat limit and cannot be revoked, so the only way to stop one that leaked is an
+app update that lists its id:
+
+```csharp
+var license = new License(new LicenseConfig
+{
+    Product = "sluice",
+    ApiBaseUrl = "https://api.keygrant.dev",
+    PublicJwks = PublicJwk.ParseSet(KeygrantKeys),
+    Major = 3,
+    RevokedLicenseFiles = [], // ids of files that leaked: an update adds them here
+});
+```
+
+In WPF (`AllowDrop="True"` on the window), a dropped file and an "Open licence file..." command:
+
+```csharp
+private async void Window_Drop(object sender, DragEventArgs e)
+{
+    if (e.Data.GetData(DataFormats.FileDrop) is not string[] paths) return;
+    var path = paths.FirstOrDefault(p => p.EndsWith(LicenseFileFormat.Extension, StringComparison.OrdinalIgnoreCase));
+    if (path is not null) await ImportAsync(path);
+}
+
+private async void OpenLicenseFile_Click(object sender, RoutedEventArgs e)
+{
+    var dialog = new Microsoft.Win32.OpenFileDialog { Filter = $"License file (*{LicenseFileFormat.Extension})|*{LicenseFileFormat.Extension}" };
+    if (dialog.ShowDialog(this) == true) await ImportAsync(dialog.FileName);
+}
+
+private async Task ImportAsync(string path)
+{
+    try
+    {
+        // Never more than a licence file can be: a larger one is refused unread.
+        if (new FileInfo(path).Length > LicenseFileFormat.MaxBytes) { ShowError(LicenseFileError.Malformed); return; }
+        var result = await license.ImportLicenseFileAsync(await File.ReadAllBytesAsync(path));
+        if (result.Ok) ShowThanks(result.LicensedTo!.Name ?? result.LicensedTo.Email);
+        else if (result.Error is { } refused) ShowError(refused);                 // the file was not taken
+        else ShowActivationError(result.ActivateError!.Value);                    // a key file's key did not activate
+    }
+    catch (Exception)
+    {
+        // An async void handler must catch everything, or the app ends: the file unreadable, the
+        // state not saved, or a licence call still running. Try again.
+        ShowRetry();
+    }
+}
+```
+
+WinForms is the same with `AllowDrop = true`, `DragEnter` setting `e.Effect = DragDropEffects.Copy`, and
+`DragDrop` reading `e.Data.GetData(DataFormats.FileDrop)`.
+
+`ImportLicenseFileAsync` takes the file's content (bytes, or its text in the `string` overload), never its
+path, and verifies it offline: signed by a key of `PublicJwks`, for this product, and, for an offline
+file, covering this build's major. It answers an `ImportLicenseFileResult`: `Ok` with its `Kind`
+(`Key` or `Offline`) and `LicensedTo`; or `Error`, a `LicenseFileError` (`Malformed`,
+`NotALicenseFile`, `BadSignature`, `UnknownKey`, `WrongProduct`, `RevokedFile`, `Upgrade`,
+`Outdated`), nothing stored; or, for a key file whose key did not activate, `ActivateError`, what
+`ActivateAsync` answers. It throws `InvalidOperationException` when a licence call before it has not
+finished, and, as `ActivateAsync` does, when the state cannot be read or the file cannot be saved.
+`UnknownKey` means the file was signed by a key this build does not carry: a newer one, after the
+product rotated its key, which an update of the app carries. A key file's notes print its key, which can
+be typed meanwhile.
+
+An offline file is kept and checked again on every `StatusAsync()`, which then answers `Licensed` with
+`Source = LicenseSource.File`, the `Key`, `LicensedTo` and the file's `Entitlements`, never asking
+the server, `RefreshAsync()` included. Show "Licensed to Ada Lovelace" from `LicensedTo`. A status from
+a file has no seat to deactivate: offer `RemoveLicenseFileAsync()` instead (`DeactivateAsync()` leaves
+the file alone). If the device also holds a key, a file that covers this build wins, and the key keeps
+working once the file is removed, revoked or outgrown. A file that does not cover this build answers
+only when no key and no running trial does.
+
+**Keep every key that signed a file in your builds.** A file names the key that signed it and never
+expires, so a key that has signed one stays in the product's key set, and in `PublicJwks`, after it
+stops signing leases. A build without it reads such a file as `Invalid` / `UnknownKey`.
+
 ## Buying from the app
 
 Give a customer who holds no key a Buy button that opens your Stripe Payment Link. The checkout emails
@@ -187,21 +270,22 @@ link, so an upgrade sale finds the key it upgrades (below).
 ## What each status means
 
 `StatusAsync()` answers a `LicenseStatus` (`State`, `Reason`, `Key`, `TrialDaysLeft`, `TrialEndsAt`,
-`Test`, `Entitlements`, `Stalled`):
+`Test`, `Entitlements`, `Stalled`, and `Source` and `LicensedTo` on a status from a licence file):
 
 | State | Reason | Meaning | What to show |
 |---|---|---|---|
-| `Licensed` | | A valid lease licenses this build on this device. | The app, in the edition its `Entitlements` name (below). Check `Test` (below). |
+| `Licensed` | | A valid lease licenses this build on this device; with `Source` `File`, a stored offline licence file does. | The app, in the edition its `Entitlements` name (below). Check `Test` (below). From a file, "Licensed to" its `LicensedTo`. |
 | `Trial` | | A trial is running on its signed trial lease: `TrialEndsAt` (ms) is the end that lease was signed to, `TrialDaysLeft` the days to it, rounded up. | The app, with a trial banner; its `Entitlements` are the trial lease's. |
-| `Unknown` | `Storage` | The licence file could not be read just now (an antivirus scan holding it). Nothing is known either way. | Keep running as before; never the activation screen for it. Ask again shortly. |
+| `Unknown` | `Storage` | The state file could not be read just now (an antivirus scan holding it). Nothing is known either way. | Keep running as before; never the activation screen for it. Ask again shortly. |
 | `Expired` | `Offline` | The lease ran out and the server could not be reached to renew it. | "Connect to the internet to renew your licence", and `RefreshAsync()` on a retry. |
-| `Expired` | `Trial` | The trial has ended, or its trial lease is not valid here. A trial end stored in the licence file is unsigned and never runs a trial on its own. | Buy / enter a key. |
+| `Expired` | `Trial` | The trial has ended, or its trial lease is not valid here. A trial end stored in the state file is unsigned and never runs a trial on its own. | Buy / enter a key. |
 | `Invalid` | `Revoked` | The key was revoked, refunded or expired, or this device was released. | Buy / enter a key; `RefreshAsync()` once they say they renewed. |
-| `Invalid` | `Upgrade` | This build is NEWER than the key covers. | Offer the upgrade (`UpgradeUrlAsync`), or the older version. |
-| `Invalid` | `Outdated` | This build is OLDER than the key's lowest version. | "Update the app": the key is for a later version. |
-| `Invalid` | `Device` | The licence was activated on another device (this machine changed, or the licence file was copied). | "Activate again on this device" (`ActivateAsync(key)`). |
-| `Invalid` | `Tampered` | The stored lease is not for this licence at all (another key, activation or product, a bad signature). | Enter a key. |
-| `Invalid` | `UnknownKey` | The stored lease is signed by a key this build does not carry. Online, the server renews it with the key it signs with now. | "Update the app" when it stays so online: this build does not carry the product's signing key. |
+| `Invalid` | `Upgrade` | This build is NEWER than the key covers (with `Source` `File`: than the file covers). | Offer the upgrade (`UpgradeUrlAsync`), or the older version; from a file, a file (or a key) for this version. |
+| `Invalid` | `Outdated` | This build is OLDER than the key's (or the file's) lowest version. | "Update the app": the key is for a later version. |
+| `Invalid` | `Device` | The licence was activated on another device (this machine changed, or the state file was copied). | "Activate again on this device" (`ActivateAsync(key)`). |
+| `Invalid` | `Tampered` | The stored lease is not for this licence at all (another key, activation or product, a bad signature); with `Source` `File`, the stored file is not one (the state file was edited). | Enter a key; from a file, import it again or remove it. |
+| `Invalid` | `UnknownKey` | The stored lease is signed by a key this build does not carry. Online, the server renews it with the key it signs with now. With `Source` `File`, no renewal comes. | "Update the app" when it stays so online: this build does not carry the product's signing key. From a file: update the app, or ask for the same licence's file signed again. |
+| `Invalid` | `RevokedFile` | The stored offline licence file is one this build lists as revoked (`Source` `File`). | Enter a key, or contact the vendor. |
 | `Unlicensed` | | No licence and no trial on this device. | Enter a key or start a trial. |
 
 `Stalled` is true when an earlier call on this `License` has not finished (a storage adapter stuck on a
@@ -213,7 +297,7 @@ devices as it allows), `Revoked`, `Upgrade`, `Outdated`, `Network` (no answer, o
 not use, or the device could not be identified in time, or an earlier call has not finished: try
 again), `InvalidLease` (the server's lease failed verification: a wrong public key, usually). The key
 is trimmed and upper-cased before it is sent and stored. `ActivateAsync` and `DeactivateAsync` THROW
-when the licence file cannot be read or saved (the customer asked, and can try again);
+when the state file cannot be read or saved (the customer asked, and can try again);
 `DeactivateAsync` also throws `InvalidOperationException` behind a call that has not finished.
 
 `DeactivateAsync` drops the local licence (keeping only trial evidence) and answers `DeactivateResult`:
@@ -222,7 +306,7 @@ false when it could not be asked, or answered anything else (a 5xx, a 429, a pro
 seat may still be held: tell the customer so (the developer's dashboard, or support, can release it),
 never that it is free. The local licence is dropped either way.
 
-It never releases another device's seat. A licence file copied or restored from another PC (a roaming
+It never releases another device's seat. A state file copied or restored from another PC (a roaming
 profile, a backup, a cloned disk) carries that PC's activation: its lease, valid or run out, is held to
 that machine's id, or a device refusal stands for this one. Then `DeactivateAsync` sends nothing, only
 drops it here, and answers `Released` true, as this device holds no seat. Releasing it would lock the
@@ -308,12 +392,12 @@ dashboard can count the devices still on builds without the staged key before yo
 ## `DeviceHold`: holding a licence to its device
 
 By default a lease whose seat is keyed by the operating system's machine id is held to that device:
-a licence file copied to another machine reads `Invalid`/`Device` there, and the server refuses its
+a state file copied to another machine reads `Invalid`/`Device` there, and the server refuses its
 renewal. An honest device is never refused for how it is identified: a host-name seat, a seat of
 unknown kind, and a run that cannot read the machine id in time are not judged.
 
 Set `DeviceHold = false` for a product deployed on **non-persistent, pooled VDI** (or a home folder
-shared between machines), where every session may be another machine with the same licence file: no
+shared between machines), where every session may be another machine with the same state file: no
 fingerprint kind is reported, no lease is judged by its device, and no fingerprints are sent to the
 server to check. The device limit still counts seats.
 
@@ -443,7 +527,9 @@ saves and says, when a status asks on a valid lease, who a device is (install me
 what the default fingerprinter answers for each machine-id reading, the status a stored lease gives with
 no verdict, a trial's status from its start and its trial lease (entitlements included in every status),
 the bits of the double each entitlement number reads as, the major a build runs as, the link
-`UpgradeUrlAsync` builds, and when a running trial reports its launch. That is every group and every vector but the Windows `machineIds`
+`UpgradeUrlAsync` builds, when a running trial reports its launch, a key's id and a lease against a key
+set, what entitlements grant, and licence files (the token a file's content holds, a file verified,
+judged and given as a status, and a file given where a lease goes). That is every group and every vector but the Windows `machineIds`
 cases, which script `reg.exe`'s output, which this SDK does not parse (it reads the registry), and the
 `majors` cases holding a fraction, which an `int` major cannot hold. A group the file holds that the
 harness does not answer fails the suite.
@@ -451,7 +537,7 @@ harness does not answer fails the suite.
 Its behaviour tests cover activation, offline status, renewal, refusals and their waits, outages that
 never lock out, the clock guard, trials, deactivation, `DeviceHold`, storage that cannot be read, calls
 stuck behind one another, entitlements on every status that carries them, the launch report, a 0.x
-major, the file storage (atomic writes, temp recovery, corrupt files,
+major, licence files (import, refusals, a stored file beside a key and a trial, key files), the file storage (atomic writes, temp recovery, corrupt files,
 revision conflicts between two processes) and the machine-id readers.
 
 `SystemTests` drive the real readers and writers on the system the suite runs on: the registry, a
@@ -484,12 +570,13 @@ Behaviour is the Electron SDK's; these are the differences, each on purpose:
 | A payment link is read by `System.Uri`, whose normal form differs from the WHATWG parser's in two ways that keep the URL the same: a percent-encoded letter, digit or `-._~` in the query is written as that character, and `'` in the query is left as it is (WHATWG writes `%27`). | The link is read as the platform's URL parser reads it; the query is then edited as text as the reference edits it. |
 | `UpgradeUrlAsync` throws `ArgumentException` for a link that is not an absolute URL (while the device holds an activation), where the reference rejects with a `TypeError`. | .NET convention. |
 | The launch report runs on a thread-pool thread (`Task.Run`), so the HTTP adapter and the fingerprinter may be called from two threads at once; the tests wait for it through an internal `LaunchReportSettled`. | An SDK with blocking I/O sends it on a thread of its own, never on the caller's. |
-| State files are read leniently: a known field of the wrong type (a refusal word from a later SDK, a number written as text, a string holding an escaped lone surrogate) reads as absent, a byte-order mark is forgiven, and fractional milliseconds are floored. What such a field held is written back as it was, unless a save sets or clears it; unknown fields are kept and written back, as the reference does. A field NAME holding a lone surrogate is dropped. | The reference keeps whatever `JSON.parse` gives, so a damaged field misbehaves later; reading it as absent keeps the rest of the licence, and writing it back keeps what an Electron build of the same product stored. The reference sets a file with a byte-order mark aside as corrupt. |
+| State files are read leniently: a known field of the wrong type (a refusal word from a later SDK, a number written as text, a string holding an escaped lone surrogate, a `licenseFile` that is not text, which the reference reads as `Invalid`/`Tampered`) reads as absent, a byte-order mark is forgiven, and fractional milliseconds are floored. What such a field held is written back as it was, unless a save sets or clears it; unknown fields are kept and written back, as the reference does. A field NAME holding a lone surrogate is dropped. | The reference keeps whatever `JSON.parse` gives, so a damaged field misbehaves later; reading it as absent keeps the rest of the licence, and writing it back keeps what an Electron build of the same product stored. The reference sets a file with a byte-order mark aside as corrupt. |
 | JSON is read to any depth `JSON.parse` reads, in one pass, but a member nested more than 64 levels deep is never held as a `JsonElement`: a state file's is kept as its text and written back (it is not in `StoredState.AdditionalFields`), a server answer's is left out of the body, and a lease's unknown claim is never read, nor a member of `ent` that is not a flag, a number or a text (dropped, however deep; any other claim the schema checks cannot nest, so one that deep is `bad-claims` there too). | System.Text.Json's `JsonDocument` takes time that grows with the square of the nesting: a state file with a member 100 000 levels deep would take seconds to read, and a million minutes, which would hang a status at launch. Nothing the SDK reads nests. |
 | A trial body's `trialStart` and `trialEndsAt` are floored to whole milliseconds, and one that is not finite (`1e400`) is no trial body: the trial evidence the device holds is answered. | Times are `long` here. `JSON.parse` reads `1e400` as `Infinity`, which the reference would save as `null`. The server sends whole milliseconds. |
 | On macOS and Linux, `ioreg` exiting with a code above 128 is read as killed by a signal ("cannot tell this time"), where `execFile` tells an exit code ("no id") from a signal. | .NET reports a signal as exit code 128 + the signal and cannot tell the two apart. Reading it as "cannot tell" keeps the device's fingerprint (it is read again next time); "no id" would switch it to the host name for good. |
 | `WindowsRegistryStash` is this SDK's own (the Electron SDK ships only a no-op stash), in the format every KeyGrant SDK keeps: `REG_QWORD` milliseconds written; a `REG_QWORD` or a decimal `REG_SZ` read; another type, 0 or less, or 2^53 or more is no evidence. | So a reinstall cannot reset a trial on Windows, whichever SDK stashed it. A value that cannot be a time would start the trial in 1970 on the server, or have it refused. |
 | A string in a server body, or in a lease claim the SDK reads (`sub`, `aid`, ...), holding an escaped lone surrogate is no string: no verdict, or `bad-claims`. Anywhere else in a body (a member the SDK does not read) it costs nothing else in the answer; unknown claims are fine. An entitlement whose name or text holds one is dropped, as a malformed member is: the licence and the other entitlements stay, where the reference would keep it. The default HTTP adapter reads a body as UTF-8 whatever charset the response names, as `fetch` does. | System.Text.Json cannot hold one, and an exception there would fail a status. The server never signs an entitlement name or text holding one. |
+| `ImportLicenseFileAsync` answers a refusal (`Error`) and a key file's failed activation (`ActivateError`) in two members, where the reference's one `error` holds either word; a whole number in a licence file's claims past a `long` is held at its end. | Idiomatic C#: each typed. Majors are compared as the reference compares doubles, so every build is judged alike. |
 | A key is upper-cased with `ToUpperInvariant` (simple case mapping); JavaScript's `toUpperCase` maps fully (`ß` to `SS`). Trimming uses JavaScript's white space exactly. | The key alphabet is ASCII, where they agree. |
 | `Test` and `Stalled` are `false` rather than absent, and `Entitlements` empty rather than absent, with `LicenseStatus` comparing it by content; times are `long` milliseconds; `HttpResult.Json` is a `JsonNode`; `IStorageAdapter.UpdateAsync` and `IFingerprinter.IdentifyAsync` are default interface methods (returning `false` / `null` for "not implemented"). | Idiomatic C# for the reference's optional members. |
 | The default storage opens files sharing read, write and delete, as libuv opens every file on Windows. | A reader of ours never refuses another process its own reads and writes. It does not let a rename over the file through: Windows refuses a rename over a file anyone holds open, whatever its sharing (access denied), and that is tried again as busy for about 1.5 s, as the reference tries `EPERM` again. |

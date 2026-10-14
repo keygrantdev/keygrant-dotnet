@@ -54,6 +54,14 @@ public sealed class LicenseConfig
     /// </summary>
     public TimeSpan HttpTimeout { get; init; } = DefaultHttpTimeout;
 
+    /// <summary>
+    /// The ids of licence files this build refuses (a file's <c>fid</c>): how an app update stops an offline
+    /// licence file that leaked, since nothing else can. Matched exactly. A stored file listed here reads as
+    /// <see cref="LicenseState.Invalid"/> / <see cref="LicenseReason.RevokedFile"/>; importing one is refused
+    /// (<see cref="LicenseFileError.RevokedFile"/>). Copied when the <see cref="License"/> is made.
+    /// </summary>
+    public IReadOnlyList<string>? RevokedLicenseFiles { get; init; }
+
     /// <summary>Adapter overrides. Any left out uses the default.</summary>
     public LicenseAdapters? Adapters { get; init; }
 

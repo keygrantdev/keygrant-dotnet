@@ -5,7 +5,7 @@ public sealed partial class License
 {
     /// <summary>
     /// Whether the licence this device holds grants the entitlement <paramref name="code"/>: a flag that is
-    /// on, a number that is not zero, or a text that is not empty. Offline, from the stored lease only: the
+    /// on, a number that is not zero, or a text that is not empty. Offline, from the stored lease or stored offline licence file only: the
     /// entitlements of the status <see cref="StatusAsync"/> gives from what is stored, with no ask and no
     /// write, so a licence that does not license this build, and none at all, grant nothing. A running trial
     /// grants what its trial lease does. Never throws for storage: a state that cannot be read grants nothing

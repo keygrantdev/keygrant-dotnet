@@ -22,6 +22,7 @@ public sealed partial class License
     private readonly IHttpAdapter http;
     private readonly TimeProvider time;
     private readonly LeaseVerifier verifier;
+    private readonly IReadOnlyList<string> revokedFiles;
     private readonly DeviceIdentityReader deviceReader;
 
     private readonly object gate = new();
@@ -285,7 +286,7 @@ public sealed partial class License
 
     /// <summary>
     /// A validate's body: with every fingerprint this device answers to when it can tell, so the server
-    /// refuses a licence file copied from another machine; with none when it cannot, so a slow read never
+    /// refuses a state file copied from another machine; with none when it cannot, so a slow read never
     /// costs an honest device its renewal.
     /// </summary>
     private JsonObject ValidateBody(StoredState state, Device device)

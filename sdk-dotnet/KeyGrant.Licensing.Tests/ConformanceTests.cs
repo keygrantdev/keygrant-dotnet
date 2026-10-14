@@ -23,6 +23,7 @@ public partial class ConformanceTests
         "machineIds", "renewals", "validLeaseAsks", "devices", "identities", "savedLastSeen", "leaseStatuses", "trialLeaseStatuses",
         "entitlementNumbers", "majors", "referencedLinks", "trialReportDue",
         "keyIds", "keySets", "grants",
+        "licenseFileContainers", "licenseFiles", "filesAsLeases",
     ];
 
     private static readonly string[] NotGroups = ["$comment", "conventions", "publicJwk", "constants"];
@@ -125,6 +126,7 @@ public partial class ConformanceTests
         Assert.Equal(FileStorage.UpdateAttempts, Long(c["UPDATE_ATTEMPTS"]));
         Assert.Equal(DeviceFingerprints.UnknownHost, Str(c["UNKNOWN_HOST"]));
         Assert.Equal(Offline.TrialReportMs, Long(c["TRIAL_REPORT_MS"]));
+        Assert.Equal(LicenseFileFormat.MaxBytes, Long(c["MAX_LICENSE_FILE_BYTES"]));
     }
 
     [Theory]
