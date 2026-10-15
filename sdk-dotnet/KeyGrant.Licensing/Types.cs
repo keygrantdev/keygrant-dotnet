@@ -85,7 +85,7 @@ public enum LicenseReason
 }
 
 /// <summary>
-/// Why <see cref="License.ActivateAsync"/> did not activate.
+/// Why <see cref="License.ActivateAsync(string, CancellationToken)"/> did not activate.
 /// </summary>
 public enum LicenseError
 {
@@ -115,6 +115,30 @@ public enum LicenseError
 
     /// <summary>The server returned a lease that failed offline verification (an integrity or configuration error).</summary>
     InvalidLease,
+
+    /// <summary>
+    /// A user-locked key asks a NEW device who it is. Ask the person for the address the key was sold to and
+    /// activate again with it (<see cref="ActivateOptions.Email"/>).
+    /// </summary>
+    UserEmailRequired,
+
+    /// <summary>Not the key's address (or longer than any); nothing is said of the real one: ask again.</summary>
+    UserEmailMismatch,
+
+    /// <summary>A code was just mailed to that address: ask for it and activate again with the address and the code.</summary>
+    UserCodeRequired,
+
+    /// <summary>The code is wrong, expired, used or not six digits: ask again, or activate with the address alone for a new one.</summary>
+    UserCodeInvalid,
+
+    /// <summary>Three codes were sent for the key this hour: wait, or use the code sent.</summary>
+    TooManyCodes,
+
+    /// <summary>Too many wrong addresses or codes for the key this hour: try again later.</summary>
+    TooManyAttempts,
+
+    /// <summary>The code could not be sent just now and nothing was activated: try again.</summary>
+    TryAgain,
 }
 
 /// <summary>
@@ -310,7 +334,7 @@ public sealed record LicenseStatus
 }
 
 /// <summary>
-/// What <see cref="License.ActivateAsync"/> answers: activated, or why not.
+/// What <see cref="License.ActivateAsync(string, CancellationToken)"/> answers: activated, or why not.
 /// </summary>
 public sealed record ActivateResult
 {
@@ -333,6 +357,34 @@ public sealed record ActivateResult
     /// <param name="error">Why not.</param>
     /// <returns>A failed result.</returns>
     public static ActivateResult Failure(LicenseError error) => new(false, error);
+}
+
+/// <summary>
+/// What a person typed for a user-locked key, for <see cref="License.ActivateAsync(string, ActivateOptions?, CancellationToken)"/>:
+/// the address the key was sold to and, for a key that mails a code to it, the code that came. Each is
+/// optional, and neither is ever stored.
+/// </summary>
+/// <remarks>
+/// A licence model can let only the person a key was sold to activate a NEW device on it. The first
+/// activation of such a key answers <see cref="LicenseError.UserEmailRequired"/>; with the address,
+/// <see cref="LicenseError.UserCodeRequired"/> (a code was just mailed) or a lease; with the code, a lease.
+/// A key that is not locked ignores both once they reach the server, but an address longer than any, or a
+/// code that is not six digits, is refused here for any key (<see cref="LicenseError.UserEmailMismatch"/>,
+/// <see cref="LicenseError.UserCodeInvalid"/>) before anything is asked of the server.
+/// </remarks>
+public sealed class ActivateOptions
+{
+    /// <summary>
+    /// The address the key was sold to, as the person typed it. The ends are trimmed and a blank is none; the
+    /// server compares it without regard to case.
+    /// </summary>
+    public string? Email { get; init; }
+
+    /// <summary>
+    /// The code mailed to that address, as the person typed it. The ends are trimmed and the spaces inside
+    /// dropped (<c>123 456</c> is <c>123456</c>); a blank is none. It must be exactly six digits.
+    /// </summary>
+    public string? Code { get; init; }
 }
 
 /// <summary>

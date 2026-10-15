@@ -24,6 +24,7 @@ public partial class ConformanceTests
         "entitlementNumbers", "majors", "referencedLinks", "trialReportDue",
         "keyIds", "keySets", "grants",
         "licenseFileContainers", "licenseFiles", "filesAsLeases",
+        "typedFor", "userLockErrors",
     ];
 
     private static readonly string[] NotGroups = ["$comment", "conventions", "publicJwk", "constants"];

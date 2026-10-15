@@ -97,6 +97,13 @@ internal static class Names
         LicenseError.Network => "network",
         LicenseError.NotConfigured => "not-configured",
         LicenseError.InvalidLease => "invalid-lease",
+        LicenseError.UserEmailRequired => "user-email-required",
+        LicenseError.UserEmailMismatch => "user-email-mismatch",
+        LicenseError.UserCodeRequired => "user-code-required",
+        LicenseError.UserCodeInvalid => "user-code-invalid",
+        LicenseError.TooManyCodes => "too-many-codes",
+        LicenseError.TooManyAttempts => "too-many-attempts",
+        LicenseError.TryAgain => "try-again",
         _ => throw new ArgumentOutOfRangeException(nameof(error)),
     };
 

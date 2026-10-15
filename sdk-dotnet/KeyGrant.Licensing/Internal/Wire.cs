@@ -26,8 +26,44 @@ internal static class Wire
         "revoked" or "expired" => LicenseError.Revoked,
         "upgrade-required" => LicenseError.Upgrade,
         "update-required" => LicenseError.Outdated,
+        // A user-locked key's new device: each word is its own error.
+        "user-email-required" => LicenseError.UserEmailRequired,
+        "user-email-mismatch" => LicenseError.UserEmailMismatch,
+        "user-code-required" => LicenseError.UserCodeRequired,
+        "user-code-invalid" => LicenseError.UserCodeInvalid,
+        "too-many-codes" => LicenseError.TooManyCodes,
+        "too-many-attempts" => LicenseError.TooManyAttempts,
+        "try-again" => LicenseError.TryAgain,
         _ => LicenseError.Network,
     };
+
+    /// <summary>The longest address the endpoint takes; a longer one is no key's address.</summary>
+    public const int MaxEmail = 254;
+
+    /// <summary>How many digits a code has.</summary>
+    private const int CodeDigits = 6;
+
+    /// <summary>
+    /// What an activation sends for the address and code a person typed for a user-locked key, each only
+    /// when there is one, or the error that refuses them before anything is sent (an address longer than
+    /// any is <see cref="LicenseError.UserEmailMismatch"/>, a code that is not six digits
+    /// <see cref="LicenseError.UserCodeInvalid"/>; the address is judged first).
+    /// </summary>
+    public static Typed TypedFor(string? email, string? code)
+    {
+        // The address, trimmed as a key is: a blank is none, and a longer one can match no key's address.
+        // The server compares it without regard to case, so it is sent as typed.
+        var enteredEmail = email is null ? "" : JsTrim(email);
+        if (enteredEmail.Length > MaxEmail) return Typed.Refuse(LicenseError.UserEmailMismatch);
+        // The code, its ends trimmed as a key's are and then its spaces (U+0020) dropped, since a code read
+        // off an email is typed as 123 456 as often as 123456: exactly six ASCII digits, else refused.
+        var enteredCode = code is null ? "" : JsTrim(code).Replace(" ", "", StringComparison.Ordinal);
+        if (enteredCode.Length > 0 && !(enteredCode.Length == CodeDigits && enteredCode.All(c => c is >= '0' and <= '9')))
+        {
+            return Typed.Refuse(LicenseError.UserCodeInvalid);
+        }
+        return new Typed(enteredEmail.Length == 0 ? null : enteredEmail, enteredCode.Length == 0 ? null : enteredCode, null);
+    }
 
     /// <summary>
     /// The key a person entered, NORMALISED (trimmed, upper case), which is the one sent and stored;
@@ -146,4 +182,14 @@ internal static class Wire
 
 /// <summary>The trial endpoint's answer.</summary>
 internal sealed record TrialBody(long TrialStart, long TrialEndsAt, string? Lease);
+
+/// <summary>
+/// What an activation sends for what a person typed for a user-locked key: the address and the code, each
+/// null when there is none, or the error that refuses them before anything is sent.
+/// </summary>
+internal sealed record Typed(string? Email, string? Code, LicenseError? Refused)
+{
+    /// <summary>Refused, for <paramref name="error"/>.</summary>
+    public static Typed Refuse(LicenseError error) => new(null, null, error);
+}
 

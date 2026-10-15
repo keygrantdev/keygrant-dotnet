@@ -15,31 +15,62 @@ public sealed partial class License
     /// (<see cref="ImportLicenseFileResult.Error"/>, nothing stored). An OFFLINE file is then stored, replacing
     /// any stored before, and licenses the app with no network, ever: <see cref="StatusAsync"/> answers it with
     /// <see cref="LicenseSource.File"/>. A KEY file's key is activated online exactly as
-    /// <see cref="ActivateAsync"/> would, and its errors are that call's
+    /// <see cref="ActivateAsync(string, CancellationToken)"/> would, and its errors are that call's
     /// (<see cref="ImportLicenseFileResult.ActivateError"/>).
     /// </summary>
     /// <param name="content">The file's bytes.</param>
-    /// <param name="cancellationToken">As for <see cref="ActivateAsync"/>.</param>
+    /// <param name="cancellationToken">As for <see cref="ActivateAsync(string, CancellationToken)"/>.</param>
     /// <returns>Taken, or why not.</returns>
     /// <exception cref="InvalidOperationException">A call before it has not settled: try again.</exception>
-    /// <remarks>Throws, as <see cref="ActivateAsync"/> does, when the state cannot be read or the file cannot be saved.</remarks>
+    /// <remarks>Throws, as <see cref="ActivateAsync(string, CancellationToken)"/> does, when the state cannot be read or the file cannot be saved.</remarks>
     public Task<ImportLicenseFileResult> ImportLicenseFileAsync(ReadOnlyMemory<byte> content, CancellationToken cancellationToken = default) =>
-        ImportAsync(() => LicenseFiles.TokenOf(content.Span), cancellationToken);
+        ImportLicenseFileAsync(content, null, cancellationToken);
+
+    /// <summary>
+    /// <see cref="ImportLicenseFileAsync(ReadOnlyMemory{byte}, CancellationToken)"/> with what a person typed for
+    /// a user-locked key (<see cref="ActivateOptions"/>), passed on to a key file's activation exactly as
+    /// <see cref="ActivateAsync(string, ActivateOptions?, CancellationToken)"/> takes it. An offline file ignores
+    /// it, and a file that is no licence file is refused before any key is asked for.
+    /// </summary>
+    /// <param name="content">The file's bytes.</param>
+    /// <param name="options">The address and code the customer typed, or null for neither.</param>
+    /// <param name="cancellationToken">As for <see cref="ActivateAsync(string, CancellationToken)"/>.</param>
+    /// <returns>Taken, or why not.</returns>
+    /// <exception cref="InvalidOperationException">A call before it has not settled: try again.</exception>
+    public Task<ImportLicenseFileResult> ImportLicenseFileAsync(
+        ReadOnlyMemory<byte> content,
+        ActivateOptions? options,
+        CancellationToken cancellationToken = default) =>
+        ImportAsync(() => LicenseFiles.TokenOf(content.Span), options, cancellationToken);
 
     /// <summary>
     /// <see cref="ImportLicenseFileAsync(ReadOnlyMemory{byte}, CancellationToken)"/> for a file's content as
     /// text (pasted, or read as a string), which is read as its UTF-8 bytes.
     /// </summary>
     /// <param name="content">The file's text.</param>
-    /// <param name="cancellationToken">As for <see cref="ActivateAsync"/>.</param>
+    /// <param name="cancellationToken">As for <see cref="ActivateAsync(string, CancellationToken)"/>.</param>
     /// <returns>Taken, or why not.</returns>
     /// <exception cref="InvalidOperationException">A call before it has not settled: try again.</exception>
-    public Task<ImportLicenseFileResult> ImportLicenseFileAsync(string content, CancellationToken cancellationToken = default)
+    public Task<ImportLicenseFileResult> ImportLicenseFileAsync(string content, CancellationToken cancellationToken = default) =>
+        ImportLicenseFileAsync(content, null, cancellationToken);
+
+    /// <summary>
+    /// <see cref="ImportLicenseFileAsync(string, CancellationToken)"/> with what a person typed for a
+    /// user-locked key, as <see cref="ImportLicenseFileAsync(ReadOnlyMemory{byte}, ActivateOptions?, CancellationToken)"/>
+    /// takes it.
+    /// </summary>
+    /// <param name="content">The file's text.</param>
+    /// <param name="options">The address and code the customer typed, or null for neither.</param>
+    /// <param name="cancellationToken">As for <see cref="ActivateAsync(string, CancellationToken)"/>.</param>
+    /// <returns>Taken, or why not.</returns>
+    /// <exception cref="InvalidOperationException">A call before it has not settled: try again.</exception>
+    public Task<ImportLicenseFileResult> ImportLicenseFileAsync(string content, ActivateOptions? options, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(content);
         // A text longer in characters than the bound is longer in UTF-8 bytes too: never encoded.
         return ImportAsync(
             () => content.Length > LicenseFileFormat.MaxBytes ? null : LicenseFiles.TokenOf(Encoding.UTF8.GetBytes(content)),
+            options,
             cancellationToken);
     }
 
@@ -62,21 +93,21 @@ public sealed partial class License
             cancellationToken);
 
     /// <summary>The import, in its turn: refused behind a call that has not settled, as <see cref="DeactivateAsync"/> is.</summary>
-    private Task<ImportLicenseFileResult> ImportAsync(Func<string?> tokenOf, CancellationToken cancellationToken) =>
+    private Task<ImportLicenseFileResult> ImportAsync(Func<string?> tokenOf, ActivateOptions? options, CancellationToken cancellationToken) =>
         Serial(
             readOnly => readOnly
                 ? throw new InvalidOperationException("a previous licence call has not finished; try again")
-                : ImportNowAsync(tokenOf(), cancellationToken),
+                : ImportNowAsync(tokenOf(), options, cancellationToken),
             cancellationToken);
 
-    private async Task<ImportLicenseFileResult> ImportNowAsync(string? token, CancellationToken cancellationToken)
+    private async Task<ImportLicenseFileResult> ImportNowAsync(string? token, ActivateOptions? options, CancellationToken cancellationToken)
     {
         if (token is null) return ImportLicenseFileResult.Refused(LicenseFileError.Malformed);
         if (!CheckFile(token).TryTake(out var claims, out var refused)) return ImportLicenseFileResult.Refused(refused);
         var licensedTo = LicenseFiles.LicensedToOf(claims);
         if (claims.Kind == LicenseFileKind.Key)
         {
-            var activated = await ActivateNowAsync(claims.Sub, cancellationToken).ConfigureAwait(false);
+            var activated = await ActivateNowAsync(claims.Sub, options, cancellationToken).ConfigureAwait(false);
             return activated.Error is { } error ? ImportLicenseFileResult.NotActivated(error) : ImportLicenseFileResult.Taken(LicenseFileKind.Key, licensedTo);
         }
         await SaveLicenseFileAsync(token).ConfigureAwait(false);

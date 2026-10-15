@@ -93,7 +93,7 @@ public sealed record ImportLicenseFileResult
 
     /// <summary>
     /// Why a key file's key did not activate, when it did not: what
-    /// <see cref="License.ActivateAsync"/> answers for it.
+    /// <see cref="License.ActivateAsync(string, CancellationToken)"/> answers for it.
     /// </summary>
     public LicenseError? ActivateError { get; }
 

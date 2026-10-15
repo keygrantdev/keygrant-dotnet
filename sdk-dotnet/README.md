@@ -251,6 +251,54 @@ only when no key and no running trial does.
 expires, so a key that has signed one stays in the product's key set, and in `PublicJwks`, after it
 stops signing leases. A build without it reads such a file as `Invalid` / `UnknownKey`.
 
+## User-locked keys
+
+A licence model can let only the person a key was sold to activate a NEW device on it: the activation
+names the address on the key and, for a key that mails a code to that address, the code too. Only a new
+device is ever asked; `StatusAsync()`, `RefreshAsync()`, a renewal, a seat the key already holds and
+everything offline are as they were, so an app that is activated keeps running through a KeyGrant or mail
+outage.
+
+`ActivateAsync(key, options)` carries what the person typed (`ActivateOptions`; each member is optional,
+and neither is ever stored):
+
+```csharp
+ActivateResult result = await license.ActivateAsync(key, new ActivateOptions { Email = emailBox.Text, Code = codeBox.Text });
+switch (result.Error)
+{
+    case LicenseError.UserEmailRequired or LicenseError.UserEmailMismatch:
+        AskForTheAddress();                    // then activate again with it
+        break;
+    case LicenseError.UserCodeRequired or LicenseError.UserCodeInvalid:
+        AskForTheCode();                       // a code was just mailed to the address
+        break;
+    case LicenseError.TooManyCodes or LicenseError.TooManyAttempts:
+        AskToTryLater();
+        break;
+    case LicenseError.TryAgain:
+        AskToRetry();                          // nothing was activated
+        break;
+}
+```
+
+| `LicenseError` | Means | The app |
+|---|---|---|
+| `UserEmailRequired` | the key is locked and no address came | ask for the address |
+| `UserEmailMismatch` | not the key's address (nothing is said of the real one) | ask again |
+| `UserCodeRequired` | the address was right and a code was just mailed to it | ask for the code |
+| `UserCodeInvalid` | the code is wrong, expired (10 minutes) or used, or the key's codes are void for the hour after five wrong ones | ask again, or activate with the address alone for a new code |
+| `TooManyCodes` | three codes were mailed for the key this hour | wait, or use the code sent |
+| `TooManyAttempts` | ten wrong addresses this hour, or the key's codes void | try again later |
+| `TryAgain` | the code could not be mailed: nothing was activated | retry; the one error here that is nobody's mistake |
+
+The address is trimmed (it is compared without regard to case) and a blank is none. The code has its ends
+trimmed and its spaces dropped (`123 456` is `123456`), and must be exactly six ASCII digits. An address
+longer than 254 UTF-16 units, or a code that is not six digits, answers `UserEmailMismatch` or
+`UserCodeInvalid` at once, for any key, asking the server nothing and so costing the key none of its wrong
+tries; the key is judged first, then the address, then the code. A key that is not locked ignores both once
+they reach the server. `ImportLicenseFileAsync(content, options)` passes them on to a key file's key.
+`DeactivateAsync()`, `RefreshAsync()` and `StartTrialAsync()` take neither.
+
 ## Buying from the app
 
 Give a customer who holds no key a Buy button that opens your Stripe Payment Link. The checkout emails
@@ -295,7 +343,8 @@ dead disk, say): the answer then comes from what is stored, with no ask and no w
 or what was entered cannot be one: nothing, or over 120 characters), `Limit` (activated on as many
 devices as it allows), `Revoked`, `Upgrade`, `Outdated`, `Network` (no answer, or an answer it could
 not use, or the device could not be identified in time, or an earlier call has not finished: try
-again), `InvalidLease` (the server's lease failed verification: a wrong public key, usually). The key
+again), `InvalidLease` (the server's lease failed verification: a wrong public key, usually), and the
+seven errors of a user-locked key ([above](#user-locked-keys)). The key
 is trimmed and upper-cased before it is sent and stored. `ActivateAsync` and `DeactivateAsync` THROW
 when the state file cannot be read or saved (the customer asked, and can try again);
 `DeactivateAsync` also throws `InvalidOperationException` behind a call that has not finished.
@@ -529,7 +578,9 @@ no verdict, a trial's status from its start and its trial lease (entitlements in
 the bits of the double each entitlement number reads as, the major a build runs as, the link
 `UpgradeUrlAsync` builds, when a running trial reports its launch, a key's id and a lease against a key
 set, what entitlements grant, and licence files (the token a file's content holds, a file verified,
-judged and given as a status, and a file given where a lease goes). That is every group and every vector but the Windows `machineIds`
+judged and given as a status, and a file given where a lease goes), and user-locked keys (what an
+activation sends for the address and code a person typed, and the error each word of a refusal gives).
+That is every group and every vector but the Windows `machineIds`
 cases, which script `reg.exe`'s output, which this SDK does not parse (it reads the registry), and the
 `majors` cases holding a fraction, which an `int` major cannot hold. A group the file holds that the
 harness does not answer fails the suite.
@@ -537,7 +588,8 @@ harness does not answer fails the suite.
 Its behaviour tests cover activation, offline status, renewal, refusals and their waits, outages that
 never lock out, the clock guard, trials, deactivation, `DeviceHold`, storage that cannot be read, calls
 stuck behind one another, entitlements on every status that carries them, the launch report, a 0.x
-major, licence files (import, refusals, a stored file beside a key and a trial, key files), the file storage (atomic writes, temp recovery, corrupt files,
+major, licence files (import, refusals, a stored file beside a key and a trial, key files), user-locked
+keys (the address and code sent, each refusal, nothing stored, a key file's key asked too), the file storage (atomic writes, temp recovery, corrupt files,
 revision conflicts between two processes) and the machine-id readers.
 
 `SystemTests` drive the real readers and writers on the system the suite runs on: the registry, a
@@ -576,6 +628,7 @@ Behaviour is the Electron SDK's; these are the differences, each on purpose:
 | On macOS and Linux, `ioreg` exiting with a code above 128 is read as killed by a signal ("cannot tell this time"), where `execFile` tells an exit code ("no id") from a signal. | .NET reports a signal as exit code 128 + the signal and cannot tell the two apart. Reading it as "cannot tell" keeps the device's fingerprint (it is read again next time); "no id" would switch it to the host name for good. |
 | `WindowsRegistryStash` is this SDK's own (the Electron SDK ships only a no-op stash), in the format every KeyGrant SDK keeps: `REG_QWORD` milliseconds written; a `REG_QWORD` or a decimal `REG_SZ` read; another type, 0 or less, or 2^53 or more is no evidence. | So a reinstall cannot reset a trial on Windows, whichever SDK stashed it. A value that cannot be a time would start the trial in 1970 on the server, or have it refused. |
 | A string in a server body, or in a lease claim the SDK reads (`sub`, `aid`, ...), holding an escaped lone surrogate is no string: no verdict, or `bad-claims`. Anywhere else in a body (a member the SDK does not read) it costs nothing else in the answer; unknown claims are fine. An entitlement whose name or text holds one is dropped, as a malformed member is: the licence and the other entitlements stay, where the reference would keep it. The default HTTP adapter reads a body as UTF-8 whatever charset the response names, as `fetch` does. | System.Text.Json cannot hold one, and an exception there would fail a status. The server never signs an entitlement name or text holding one. |
+| `ActivateAsync(key, options)` and `ImportLicenseFileAsync(content, options)` are overloads, with the options before the `CancellationToken`, where the reference takes an optional second argument; a code is text here, where the reference also reads a code kept as a number. | .NET convention: the existing calls keep their shape. A typed port takes text. |
 | `ImportLicenseFileAsync` answers a refusal (`Error`) and a key file's failed activation (`ActivateError`) in two members, where the reference's one `error` holds either word; a whole number in a licence file's claims past a `long` is held at its end. | Idiomatic C#: each typed. Majors are compared as the reference compares doubles, so every build is judged alike. |
 | A key is upper-cased with `ToUpperInvariant` (simple case mapping); JavaScript's `toUpperCase` maps fully (`ß` to `SS`). Trimming uses JavaScript's white space exactly. | The key alphabet is ASCII, where they agree. |
 | `Test` and `Stalled` are `false` rather than absent, and `Entitlements` empty rather than absent, with `LicenseStatus` comparing it by content; times are `long` milliseconds; `HttpResult.Json` is a `JsonNode`; `IStorageAdapter.UpdateAsync` and `IFingerprinter.IdentifyAsync` are default interface methods (returning `false` / `null` for "not implemented"). | Idiomatic C# for the reference's optional members. |

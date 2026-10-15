@@ -71,12 +71,32 @@ public sealed partial class License
     /// <param name="key">The key as the customer entered it.</param>
     /// <param name="cancellationToken">Throws <see cref="OperationCanceledException"/> while the call waits its turn, or before its request is answered (nothing is saved).</param>
     /// <returns>Activated, or why not.</returns>
-    public Task<ActivateResult> ActivateAsync(string key, CancellationToken cancellationToken = default)
+    /// <remarks>
+    /// A user-locked key asks a new device who it is, and answers <see cref="LicenseError.UserEmailRequired"/> here:
+    /// <see cref="ActivateAsync(string, ActivateOptions?, CancellationToken)"/> carries the address and the code.
+    /// </remarks>
+    public Task<ActivateResult> ActivateAsync(string key, CancellationToken cancellationToken = default) =>
+        ActivateAsync(key, null, cancellationToken);
+
+    /// <summary>
+    /// <see cref="ActivateAsync(string, CancellationToken)"/> with what a person typed for a user-locked key
+    /// (<see cref="ActivateOptions"/>): its address and, for a key that mails a code to it, the code. Nothing is
+    /// stored. The key is judged first, then the address, then the code: an address longer than any answers
+    /// <see cref="LicenseError.UserEmailMismatch"/>, and a code that is not six digits
+    /// <see cref="LicenseError.UserCodeInvalid"/>, at once and for any key, asking nothing (so costing the key
+    /// none of its wrong tries). Only an activation takes them: <see cref="RefreshAsync"/>,
+    /// <see cref="DeactivateAsync"/> and <see cref="StartTrialAsync"/> never ask a device who it is.
+    /// </summary>
+    /// <param name="key">The key as the customer entered it.</param>
+    /// <param name="options">The address and code the customer typed, or null for neither.</param>
+    /// <param name="cancellationToken">As for <see cref="ActivateAsync(string, CancellationToken)"/>.</param>
+    /// <returns>Activated, or why not.</returns>
+    public Task<ActivateResult> ActivateAsync(string key, ActivateOptions? options, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(key);
         // Behind a call that has not settled, nothing may be written: answered as not reaching the server, to retry.
         return Serial(
-            readOnly => readOnly ? Task.FromResult(ActivateResult.Failure(LicenseError.Network)) : ActivateNowAsync(key, cancellationToken),
+            readOnly => readOnly ? Task.FromResult(ActivateResult.Failure(LicenseError.Network)) : ActivateNowAsync(key, options, cancellationToken),
             cancellationToken);
     }
 
@@ -166,11 +186,15 @@ public sealed partial class License
             },
             cancellationToken);
 
-    private async Task<ActivateResult> ActivateNowAsync(string key, CancellationToken cancellationToken)
+    private async Task<ActivateResult> ActivateNowAsync(string key, ActivateOptions? options, CancellationToken cancellationToken)
     {
         // Normalised, and refused here when it cannot be a key.
         var entered = Wire.EnteredKey(key);
         if (entered is null) return ActivateResult.Failure(LicenseError.InvalidKey);
+        // What a person typed for a user-locked key: one that can be no address, or no code, is refused here,
+        // before anything is asked of the server or its wrong tries are spent.
+        var typed = Wire.TypedFor(options?.Email, options?.Code);
+        if (typed.Refused is { } refused) return ActivateResult.Failure(refused);
         // Install memory protects the seat this install holds: re-activating that key keeps to it; a
         // first activation, or another key's, starts afresh.
         var stored = await LoadAsync().ConfigureAwait(false);
@@ -193,6 +217,8 @@ public sealed partial class License
             if (deviceName is not null) body["name"] = deviceName;
             body["major"] = major;
             body["kids"] = KidsJson();
+            if (typed.Email is not null) body["email"] = typed.Email;
+            if (typed.Code is not null) body["code"] = typed.Code;
             response = await PostAsync("activate", body, null, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception) when (!cancellationToken.IsCancellationRequested)

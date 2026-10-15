@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.6.0
+
+- User-locked keys: `License.ActivateAsync(key, options)` and `License.ImportLicenseFileAsync(content, options)`,
+  overloads that take an `ActivateOptions`. A licence model can let only the person a key was sold to activate
+  a new device on it, known by the address on the key (`Email`), and, for a key that mails a code to that
+  address, by the code too (`Code`). Both are optional; the existing calls are as they were and send neither.
+  Only a new device is ever asked: `RefreshAsync()`, `StatusAsync()`, a renewal, a seat the key already holds
+  and offline behaviour are unchanged. Nothing about the address or the code is stored.
+- `LicenseError` has seven more members, the refusals an app can act on: `UserEmailRequired` (ask for the
+  address), `UserEmailMismatch`, `UserCodeRequired` (a code was just mailed: ask for it), `UserCodeInvalid`,
+  `TooManyCodes`, `TooManyAttempts` and `TryAgain` (the code could not be sent: nothing was activated, ask
+  again). A `switch` over every `LicenseError` has seven more cases.
+- An address longer than 254 UTF-16 units, or a code that is not exactly six ASCII digits (spaces inside it
+  are dropped first), is refused by the SDK itself, for any key, before the server is asked
+  (`UserEmailMismatch`, `UserCodeInvalid`). The conformance vectors' two new groups, `typedFor` and
+  `userLockErrors`, hold this to the reference.
+
 ## 0.5.0
 
 - Licence files: `License.ImportLicenseFileAsync(content)` takes a `.kglicense` file's content (bytes, or
