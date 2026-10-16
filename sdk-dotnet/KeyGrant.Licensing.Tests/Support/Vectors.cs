@@ -151,6 +151,13 @@ internal static class Vectors
         if (claims.MinMajor is { } min) json["minMajor"] = min;
         if (claims.UpgradeUntil is { } until) json["upgradeUntil"] = until;
         json["ent"] = EntitlementsJson(claims.Ent);
+        // The meters only when the lease has the claim (an empty map for one that is not an object).
+        if (claims.Met is { } met)
+        {
+            var meters = new JsonObject();
+            foreach (var (code, f) in met) meters[code] = new JsonObject { ["left"] = f.Left, ["total"] = f.Total, ["offline"] = f.Offline, ["resets"] = f.Resets };
+            json["met"] = meters;
+        }
         json["iat"] = claims.Iat;
         json["exp"] = claims.Exp;
         if (claims.Grace is { } grace) json["grace"] = grace;

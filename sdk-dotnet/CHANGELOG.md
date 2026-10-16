@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.7.0
+
+- Metered uses: `License.UseAsync(meter, n = 1, cancellationToken)` spends `n` uses of a meter the key's licence
+  model counts (1,000 exports for good, 50 renders each billing period) and answers a `UseResult`: `Ok` with
+  `Left`, or `Error` (a `UseError`) with `Left` where it says one. The errors are `InvalidAmount`, `NoMeter`,
+  `UsedUp` (with `Left`), `OfflineLimit` (with `Left`), `NotLicensed`, `Storage`, or the server's verdict on the
+  key, the build or the device (`Revoked`, `Upgrade`, `Outdated`, `Device`). Online it is exact and atomic. When
+  KeyGrant gives no answer (no network, a timeout, a 5xx, a 429) the device spends from its offline allowance for
+  the meter, never past what it last heard is left, and answers `Ok` with `Offline` true; past the allowance it is
+  `OfflineLimit`. A spend the allowance would refuse asks the server, whatever the last outage left behind, once a
+  minute while it stays out of reach; one it covers waits a minute after an outage, doubling to an hour. It
+  throws for no outcome (the one exception is a `CancellationToken` cancelled while the call waits its turn or
+  before its request is sent: nothing is spent; cancelled while the request is out it stops waiting, spends as
+  for no answer and returns its result, so read it even after cancelling), and its request waits at most 5 seconds (less when `HttpTimeout`
+  is shorter). `n` is a `long`: anything outside 1 to 1,000,000,000 is `InvalidAmount`, asking nothing. A meter
+  never takes a licence away: nothing in `StatusAsync()` reads one to decide whether the app is licensed.
+- `LicenseStatus.Meters`, by meter code: `Left` (the newest figure, the lease's or the last `UseAsync` answer's, net
+  of this device's unsynced spends), `Total`, `Offline` (this device's allowance, from the same figure), `Unsynced`
+  and `Resets`. Offline, from the lease and the stored figures; on a `Licensed` status from a key's lease that
+  names meters only, empty on every other status. It counts in the status's equality and
+  its `ToString()`. The new types are `MeterStatus`, `UseResult` and `UseError`.
+- The spends a device made with no answer are kept in the stored state (`StoredState.Spends`, with the newest
+  figures a `UseAsync` answer gave in `MeterFigures`), merged across processes as the rest of the state is, and
+  reported with the next `validate` (a check-in or renewal), `use` or `deactivate`, which now also names the
+  device's fingerprints when it carries a report. They are dropped only when the server says it recorded them;
+  a device back online reports at its next `StatusAsync()`. A journal never fails a renewal or a deactivation.
+  Entries not reported within 180 days are dropped, and at most 64 are kept. A spend the SDK could not save (a
+  disk that refuses its writes) is kept in memory, counted in `Left` and `Unsynced`, and reported once it has
+  been saved (a spend whose request got no answer, and the take-back of one that was refused, are reported with
+  the next request). `DeactivateAsync()` clears them with the licence even when KeyGrant could not be reached, so
+  what the server did not hear is lost: at most the offline allowance of each meter.
+- `StoredState` has `Spends` and `MeterFigures`, and `SpendEntry`, `SpendKind` and `MeterFigure` are new. A custom
+  `IStorageAdapter` keeps them with the rest of the state; the file is the Electron SDK's, field for field. A
+  stored journal or figure of another shape is read as empty, or left out.
+
 ## 0.6.0
 
 - User-locked keys: `License.ActivateAsync(key, options)` and `License.ImportLicenseFileAsync(content, options)`,

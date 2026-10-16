@@ -159,7 +159,11 @@ public sealed partial class License
         Serial(
             async readOnly =>
             {
-                if (!readOnly) await SaveUnsavedTrialAsync().ConfigureAwait(false);
+                if (!readOnly)
+                {
+                    await SaveUnsavedTrialAsync().ConfigureAwait(false);
+                    await SaveUnsavedJournalAsync().ConfigureAwait(false);
+                }
                 var state = await LoadForStatusAsync(readOnly).ConfigureAwait(false);
                 var status = state is null ? Unreadable : await StatusNowAsync(state, forceOnline, readOnly, cancellationToken).ConfigureAwait(false);
                 // Answered from storage behind a call that has not finished: say so.
@@ -234,57 +238,9 @@ public sealed partial class License
         if (!evaluated.Ok) return ActivateResult.Failure(LicenseError.InvalidLease);
 
         var patch = Offline.ActivationPatch(entered, activationId, lease, evaluated.Claims!, now, major, kind);
-        await SaveAsync(patch, null, new Basis { Activation = new Asked(askedAt, activationId, stored.VerdictAt) }).ConfigureAwait(false);
+        // Activating another seat drops the journal of the old one, unreported (an activation sends no report); the same seat keeps it.
+        await SaveWithAsync(patch, null, new Basis { Activation = new Asked(askedAt, activationId, stored.VerdictAt) }, [new ActivatedOp(activationId)]).ConfigureAwait(false);
         return ActivateResult.Success;
-    }
-
-    private async Task<DeactivateResult> DeactivateNowAsync(CancellationToken cancellationToken)
-    {
-        var state = await LoadAsync().ConfigureAwait(false);
-        // Nothing held is nothing to release: the seat is as free as it gets. Neither is a seat another
-        // device holds this one's to release (a state file copied or restored from another PC): it is
-        // only dropped here, and this device, which holds no seat, answers released.
-        var released = true;
-        if (!string.IsNullOrEmpty(state.Key) && !string.IsNullOrEmpty(state.ActivationId))
-        {
-            var elsewhere = await SeatElsewhereAsync(state, cancellationToken).ConfigureAwait(false);
-            // Cancelled while who this device is was read, before anything was asked: nothing is dropped.
-            cancellationToken.ThrowIfCancellationRequested();
-            if (!elsewhere)
-            {
-                try
-                {
-                    // Only a 200 is KeyGrant saying the seat is free. A 5xx, a 429 or a proxy's page is an
-                    // answer, but not that one.
-                    var response = await PostAsync("deactivate", new JsonObject { ["key"] = state.Key, ["activationId"] = state.ActivationId }, null, cancellationToken)
-                        .ConfigureAwait(false);
-                    released = response.Status == 200;
-                }
-                catch (Exception) when (!cancellationToken.IsCancellationRequested)
-                {
-                    // Best-effort; still cleared locally.
-                    released = false;
-                }
-            }
-        }
-        // Stamped, so that an answer to an older ask is not saved over it.
-        var patch = Offline.Unkeyed;
-        patch.Set(StateField.VerdictAt, EffectiveNow(state));
-        await SaveAsync(patch).ConfigureAwait(false);
-        return new DeactivateResult(released);
-    }
-
-    /// <summary>
-    /// Whether the stored activation is another device's: a device refusal that stands for this one, or
-    /// a lease held to a machine id this device does not have, expired or not
-    /// (<see cref="Offline.HeldElsewhere"/>). A state file copied or restored from another PC carries
-    /// that PC's activation; releasing it would lock that PC out at its next check-in.
-    /// </summary>
-    private async Task<bool> SeatElsewhereAsync(StoredState state, CancellationToken cancellationToken)
-    {
-        var device = await DeviceAsync(TimeSpan.FromMilliseconds(MachineId.TimeoutMs), state.DeviceKind, cancellationToken).ConfigureAwait(false);
-        if (Offline.StandingRefusal(state, major, device.OwnClaim, device.CanTell) == Refusal.Device) return true;
-        return !string.IsNullOrEmpty(state.Lease) && Offline.HeldElsewhere(Verify(state.Lease, EffectiveNow(state)), device.Claims, device.CanTell);
     }
 
     /// <summary>
@@ -346,17 +302,21 @@ public sealed partial class License
     {
         // Not this licence (`tampered`), or not this device (`device`): the server is asked under the usual waits, below.
         var evaluated = await EvaluateAsync(lease, now, state.Key, state.ActivationId, state.DeviceKind, cancellationToken).ConfigureAwait(false);
-        // What the lease says offline, entitlements included: the answer whenever the server gives no verdict.
+        // What the lease says offline, entitlements and meters included: the answer whenever the server gives no verdict.
         var offline = Offline.LeaseStatus(evaluated, state.Key);
         if (evaluated.Ok)
         {
+            offline = Meters.Metered(offline, evaluated.Claims!, state);
             if (readOnly) return offline;
             var held = await NoteKeptAsync(state, evaluated.Claims!, now).ConfigureAwait(false);
             if (forceOnline) return await TryRenewAsync(held, null, cancellationToken).ConfigureAwait(false) ?? offline;
             // Asked, bounded in time, when the server should hear from this device before the lease
-            // runs out: a newer major than it last heard, on an open lease; or a lease nearing its end.
-            // The valid lease is the answer when the ask gets no verdict.
-            if (!Renewal.AsksOnValidLease(evaluated.Claims!, held, major, now, clock.Now())) return offline;
+            // runs out: a newer major than it last heard, on an open lease; a lease nearing its end; or a
+            // journal of spends it has not heard of, while the journal's own wait is not running. The journal
+            // that asks is the one a request would report (spends held in memory that no request carries do
+            // not make a status ask at every call). The valid lease is the answer when the ask gets no verdict.
+            var asking = held with { Spends = await ReportableAsync(held).ConfigureAwait(false) };
+            if (!Renewal.AsksOnValidLease(evaluated.Claims!, asking, major, now, clock.Now())) return offline;
             return await TryRenewAsync(held, TimeSpan.FromMilliseconds(Wire.StatusCheckTimeoutMs), cancellationToken).ConfigureAwait(false) ?? offline;
         }
         // Locally invalid: give the server a chance to heal it before locking the customer out, once

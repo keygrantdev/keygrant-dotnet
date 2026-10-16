@@ -223,6 +223,18 @@ internal static class StateFields
     /// </summary>
     public static StoredState Set(StoredState state, StateField field, object? value) => Typed(Untyped(state, JsonName(field)), field, value);
 
+    /// <summary>
+    /// <paramref name="state"/> with the journal of unsynced spends and the figures beside it set (an empty journal, or no
+    /// figures, is the field absent): whatever the file held under either that this SDK could not type goes with it, as a
+    /// landed journal replaces both fields whole.
+    /// </summary>
+    public static StoredState WithJournal(StoredState state, IReadOnlyList<SpendEntry> spends, IReadOnlyDictionary<string, MeterFigure> figures) =>
+        Untyped(Untyped(state, "spends"), "meterFigures") with
+        {
+            Spends = spends.Count > 0 ? spends : null,
+            MeterFigures = figures.Count > 0 ? figures : null,
+        };
+
     /// <summary>The state without what the file held under <paramref name="name"/> untyped, however deep.</summary>
     private static StoredState Untyped(StoredState state, string name)
     {

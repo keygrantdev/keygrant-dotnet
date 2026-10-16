@@ -214,6 +214,16 @@ internal static class Json
         return true;
     }
 
+    /// <summary>
+    /// An element's number when it is a whole number a double holds exactly (at most 2^53 - 1 in size, as JSON reads every
+    /// number as a double: <c>4.0</c> is 4, <c>-0</c> is 0), or null: a fraction, a number out of range, anything but a number.
+    /// </summary>
+    public static long? SafeInteger(JsonElement value)
+    {
+        if (value.ValueKind != JsonValueKind.Number || !value.TryGetDouble(out var d)) return null;
+        return double.IsFinite(d) && Math.Floor(d) == d && Math.Abs(d) <= ClaimsParser.MaxSafeInteger ? (long)d : null;
+    }
+
     /// <summary>An element's number as an int, when it is a whole number an int holds.</summary>
     public static bool TryInt(JsonElement element, out int value)
     {

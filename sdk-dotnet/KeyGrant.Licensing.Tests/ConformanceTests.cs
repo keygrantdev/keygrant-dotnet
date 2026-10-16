@@ -15,7 +15,7 @@ public partial class ConformanceTests
     private static readonly LeaseVerifier Verifier = new(PublicJwk.Parse(All["publicJwk"]!.ToJsonString()).KeyBytes());
 
     /// <summary>Every group the harness answers. A group the file has and this list does not fails <see cref="Answers_every_group_the_vectors_hold"/>.</summary>
-    private static readonly string[] Answered =
+    private static string[] Answered =>
     [
         "leases", "trials", "fingerprintClaims", "fingerprints", "machineFingerprints", "hostFingerprints", "kept", "renew", "asks",
         "standing", "trialStatuses", "refusalPatches", "leasePatches", "keyedBy", "merges", "guardedNow", "clockCorrections",
@@ -25,6 +25,7 @@ public partial class ConformanceTests
         "keyIds", "keySets", "grants",
         "licenseFileContainers", "licenseFiles", "filesAsLeases",
         "typedFor", "userLockErrors",
+        .. MeterGroups,
     ];
 
     private static readonly string[] NotGroups = ["$comment", "conventions", "publicJwk", "constants"];
@@ -128,6 +129,11 @@ public partial class ConformanceTests
         Assert.Equal(DeviceFingerprints.UnknownHost, Str(c["UNKNOWN_HOST"]));
         Assert.Equal(Offline.TrialReportMs, Long(c["TRIAL_REPORT_MS"]));
         Assert.Equal(LicenseFileFormat.MaxBytes, Long(c["MAX_LICENSE_FILE_BYTES"]));
+        Assert.Equal(Meters.MaxMeterUses, Long(c["MAX_METER_USES"]));
+        Assert.Equal(Meters.MaxPendingSpends, Long(c["MAX_PENDING_SPENDS"]));
+        Assert.Equal(Meters.MaxPendingVoids, Long(c["MAX_PENDING_VOIDS"]));
+        Assert.Equal(Meters.PendingMaxMs, Long(c["PENDING_MAX_MS"]));
+        Assert.Equal(Meters.UseTimeoutMs, Long(c["USE_TIMEOUT_MS"]));
     }
 
     [Theory]

@@ -196,6 +196,11 @@ public sealed record LicenseStatus
 
     private readonly IReadOnlyDictionary<string, Entitlement> entitlements = NoEntitlements;
 
+    /// <summary>The map of no meters, which every status holds until a key's lease names one.</summary>
+    private static readonly IReadOnlyDictionary<string, MeterStatus> NoMeters = ReadOnlyDictionary<string, MeterStatus>.Empty;
+
+    private readonly IReadOnlyDictionary<string, MeterStatus> meters = NoMeters;
+
     /// <summary>The licence's state.</summary>
     public LicenseState State { get; init; }
 
@@ -243,6 +248,21 @@ public sealed record LicenseStatus
     }
 
     /// <summary>
+    /// The key's meters, by code, as <see cref="License.UseAsync"/> counts them: on a <see cref="LicenseState.Licensed"/>
+    /// status from a key's lease that names some, each with what is <see cref="MeterStatus.Left"/> net of this device's
+    /// unsynced spends. EMPTY on every other status (a trial, an offline licence file, an expired or invalid licence), and
+    /// when the lease names none. Never null (null given is read as none). Read-only, and the status's own copy of what it
+    /// was given. A meter never takes the licence away: nothing reads one to decide whether the app is licensed.
+    /// </summary>
+    public IReadOnlyDictionary<string, MeterStatus> Meters
+    {
+        get => meters;
+        init => meters = value is null || value.Count == 0
+            ? NoMeters
+            : new ReadOnlyDictionary<string, MeterStatus>(new Dictionary<string, MeterStatus>(value, StringComparer.Ordinal));
+    }
+
+    /// <summary>
     /// True when an earlier call on this <see cref="License"/> has not finished (an adapter stuck on
     /// storage, say), so this answer comes from what is stored, with no ask and no write. A restart
     /// clears it.
@@ -266,8 +286,8 @@ public sealed record LicenseStatus
 
     /// <summary>
     /// Whether <paramref name="other"/> says the same: every member equal, and the
-    /// <see cref="Entitlements"/> compared by CONTENT (the same names, each with an equal
-    /// <see cref="Entitlement"/>). A record compares a dictionary member by reference, which would make
+    /// <see cref="Entitlements"/> and <see cref="Meters"/> compared by CONTENT (the same names, each with an equal
+    /// value). A record compares a dictionary member by reference, which would make
     /// two statuses from the same lease unequal; so this is written out, and must name every member.
     /// </summary>
     /// <param name="other">The status to compare with.</param>
@@ -283,7 +303,8 @@ public sealed record LicenseStatus
         && Stalled == other.Stalled
         && Source == other.Source
         && LicensedTo == other.LicensedTo
-        && SameEntitlements(Entitlements, other.Entitlements);
+        && SameEntitlements(Entitlements, other.Entitlements)
+        && SameMeters(Meters, other.Meters);
 
     /// <summary>A hash agreeing with <see cref="Equals(LicenseStatus?)"/>: the entitlements' taken without regard to their order.</summary>
     /// <returns>The hash.</returns>
@@ -291,7 +312,9 @@ public sealed record LicenseStatus
     {
         var granted = 0;
         foreach (var (name, entitlement) in Entitlements) granted ^= HashCode.Combine(name, entitlement);
-        return HashCode.Combine(HashCode.Combine(State, Reason, Key, TrialDaysLeft, TrialEndsAt, Test, Stalled, granted), Source, LicensedTo);
+        var counted = 0;
+        foreach (var (code, meter) in Meters) counted ^= HashCode.Combine(code, meter);
+        return HashCode.Combine(HashCode.Combine(State, Reason, Key, TrialDaysLeft, TrialEndsAt, Test, Stalled, granted), Source, LicensedTo, counted);
     }
 
     /// <summary>
@@ -315,9 +338,27 @@ public sealed record LicenseStatus
             builder.Append(first ? " " : ", ").Append(name).Append(" = ").Append(entitlement);
             first = false;
         }
+        builder.Append(" }, Meters = {");
+        first = true;
+        foreach (var (code, meter) in Meters.OrderBy(m => m.Key, StringComparer.Ordinal))
+        {
+            builder.Append(first ? " " : ", ").Append(code).Append(" = ").Append(meter);
+            first = false;
+        }
         builder.Append(" }, Stalled = ").Append(Stalled)
             .Append(", Source = ").Append(Source)
             .Append(", LicensedTo = ").Append(LicensedTo);
+        return true;
+    }
+
+    private static bool SameMeters(IReadOnlyDictionary<string, MeterStatus> a, IReadOnlyDictionary<string, MeterStatus> b)
+    {
+        if (ReferenceEquals(a, b)) return true;
+        if (a.Count != b.Count) return false;
+        foreach (var (code, meter) in a)
+        {
+            if (!b.TryGetValue(code, out var other) || meter != other) return false;
+        }
         return true;
     }
 
@@ -332,73 +373,6 @@ public sealed record LicenseStatus
         return true;
     }
 }
-
-/// <summary>
-/// What <see cref="License.ActivateAsync(string, CancellationToken)"/> answers: activated, or why not.
-/// </summary>
-public sealed record ActivateResult
-{
-    private ActivateResult(bool ok, LicenseError? error)
-    {
-        Ok = ok;
-        Error = error;
-    }
-
-    /// <summary>Whether the key was activated on this device.</summary>
-    public bool Ok { get; }
-
-    /// <summary>Why not, when <see cref="Ok"/> is false.</summary>
-    public LicenseError? Error { get; }
-
-    /// <summary>The key was activated.</summary>
-    public static ActivateResult Success { get; } = new(true, null);
-
-    /// <summary>The key was not activated, for <paramref name="error"/>.</summary>
-    /// <param name="error">Why not.</param>
-    /// <returns>A failed result.</returns>
-    public static ActivateResult Failure(LicenseError error) => new(false, error);
-}
-
-/// <summary>
-/// What a person typed for a user-locked key, for <see cref="License.ActivateAsync(string, ActivateOptions?, CancellationToken)"/>:
-/// the address the key was sold to and, for a key that mails a code to it, the code that came. Each is
-/// optional, and neither is ever stored.
-/// </summary>
-/// <remarks>
-/// A licence model can let only the person a key was sold to activate a NEW device on it. The first
-/// activation of such a key answers <see cref="LicenseError.UserEmailRequired"/>; with the address,
-/// <see cref="LicenseError.UserCodeRequired"/> (a code was just mailed) or a lease; with the code, a lease.
-/// A key that is not locked ignores both once they reach the server, but an address longer than any, or a
-/// code that is not six digits, is refused here for any key (<see cref="LicenseError.UserEmailMismatch"/>,
-/// <see cref="LicenseError.UserCodeInvalid"/>) before anything is asked of the server.
-/// </remarks>
-public sealed class ActivateOptions
-{
-    /// <summary>
-    /// The address the key was sold to, as the person typed it. The ends are trimmed and a blank is none; the
-    /// server compares it without regard to case.
-    /// </summary>
-    public string? Email { get; init; }
-
-    /// <summary>
-    /// The code mailed to that address, as the person typed it. The ends are trimmed and the spaces inside
-    /// dropped (<c>123 456</c> is <c>123456</c>); a blank is none. It must be exactly six digits.
-    /// </summary>
-    public string? Code { get; init; }
-}
-
-/// <summary>
-/// What <see cref="License.DeactivateAsync"/> did with this device's seat. The local licence is dropped
-/// either way.
-/// </summary>
-/// <param name="Released">
-/// True when KeyGrant confirmed the release (a 200), or when this device held no activation to release
-/// (none at all, or only another device's, carried by a state file copied from it: never released from here).
-/// False when it could not be asked, or answered anything else (a 5xx, a 429, a proxy's page): the seat
-/// may still be held, and the app should say so (the developer's dashboard, or support, can release it),
-/// not tell the customer it is free.
-/// </param>
-public sealed record DeactivateResult(bool Released);
 
 /// <summary>
 /// Who this device is, as far as can be told this time (<see cref="IFingerprinter.IdentifyAsync"/>).

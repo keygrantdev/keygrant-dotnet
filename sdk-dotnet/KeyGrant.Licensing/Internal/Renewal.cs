@@ -119,14 +119,15 @@ internal static class Renewal
     /// refresh always asks). When the server should hear from this device before the lease runs out:
     /// a newer major than the server last heard, on an open lease (<c>major</c> at least
     /// <see cref="Offline.OpenMajor"/>; else it might not hear of it until the key's upgrade window has
-    /// closed), or a lease nearing its end (<see cref="Offline.RenewsEarly"/>, by the guarded clock
-    /// <paramref name="now"/>). And only once the wait after the last ask is over
-    /// (<see cref="Offline.AskDue"/>, by the device clock <paramref name="clockNow"/>).
+    /// closed), a lease nearing its end (<see cref="Offline.RenewsEarly"/>, by the guarded clock
+    /// <paramref name="now"/>), or a journal of spends KeyGrant has not heard of while its own wait is not running
+    /// (<see cref="Meters.JournalAsks"/>, so a device back online reports at its next status). And only once the
+    /// wait after the last ask is over (<see cref="Offline.AskDue"/>, by the device clock <paramref name="clockNow"/>).
     /// </summary>
     public static bool AsksOnValidLease(LeaseClaims claims, StoredState state, int major, long now, long clockNow)
     {
         var newMajor = claims.Major >= Offline.OpenMajor && major > (state.CheckedMajor ?? 0);
-        var due = newMajor || Offline.RenewsEarly(claims, now);
+        var due = newMajor || Offline.RenewsEarly(claims, now) || Meters.JournalAsks(state.Spends, now);
         return due && Offline.AskDue(state, clockNow, false);
     }
 }

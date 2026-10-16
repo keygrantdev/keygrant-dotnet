@@ -80,6 +80,10 @@ internal static class StoredStateJson
     /// </summary>
     private static StoredState? Typed(StoredState state, string name, JsonElement value)
     {
+        // The journal and its figures are the device's own, never the server's word: a list that is not one, or a
+        // member of another shape, is read as empty, or left out. What is not a list (or an object) stays untyped.
+        if (name == "spends") return value.ValueKind == JsonValueKind.Array ? state with { Spends = Spends(value) } : null;
+        if (name == "meterFigures") return value.ValueKind == JsonValueKind.Object ? state with { MeterFigures = Figures(value) } : null;
         if (!StateFields.TryByName(name, out var field)) return null;
         object? typed = field switch
         {
@@ -154,6 +158,8 @@ internal static class StoredStateJson
         if (Has("rev", state.Rev)) writer.WriteNumber("rev", state.Rev!.Value);
         if (Has("trialReportedAt", state.TrialReportedAt)) writer.WriteNumber("trialReportedAt", state.TrialReportedAt!.Value);
         if (Has("licenseFile", state.LicenseFile)) writer.WriteString("licenseFile", state.LicenseFile);
+        if (Has("spends", state.Spends is { Count: > 0 } ? state.Spends : null)) WriteSpends(writer, state.Spends!);
+        if (Has("meterFigures", state.MeterFigures is { Count: > 0 } ? state.MeterFigures : null)) WriteFigures(writer, state.MeterFigures!);
         if (extra is not null)
         {
             foreach (var (name, value) in extra)
@@ -179,7 +185,7 @@ internal static class StoredStateJson
     {
         "key", "activationId", "lease", "trialStart", "trialEndsAt", "trialLease", "trialAt", "lastSeen",
         "checkedMajor", "keptMajor", "backoffSince", "backoffMs", "refused", "refusedMajor", "refusedFor",
-        "deviceKind", "verdictAt", "rev", "trialReportedAt", "licenseFile",
+        "deviceKind", "verdictAt", "rev", "trialReportedAt", "licenseFile", "spends", "meterFigures",
     };
 
     /// <summary>
@@ -190,6 +196,79 @@ internal static class StoredStateJson
     private static readonly HashSet<string> Retired = new(StringComparer.Ordinal) { "purchaseToken", "purchaseTokenAt", "claimAskedAt" };
 
     public static bool IsKnown(string name) => Known.Contains(name);
+
+    private static void WriteSpends(Utf8JsonWriter writer, IReadOnlyList<SpendEntry> spends)
+    {
+        writer.WriteStartArray("spends");
+        foreach (var e in spends)
+        {
+            writer.WriteStartObject();
+            writer.WriteString("id", e.Id);
+            writer.WriteString("meter", e.Meter);
+            writer.WriteNumber("n", e.N);
+            writer.WriteNumber("at", e.At);
+            writer.WriteString("kind", Names.Of(e.Kind));
+            writer.WriteEndObject();
+        }
+        writer.WriteEndArray();
+    }
+
+    private static void WriteFigures(Utf8JsonWriter writer, IReadOnlyDictionary<string, MeterFigure> figures)
+    {
+        writer.WriteStartObject("meterFigures");
+        foreach (var (code, f) in figures)
+        {
+            writer.WriteStartObject(code);
+            writer.WriteNumber("left", f.Left);
+            writer.WriteNumber("total", f.Total);
+            writer.WriteNumber("offline", f.Offline);
+            writer.WriteBoolean("resets", f.Resets);
+            writer.WriteNumber("at", f.At);
+            writer.WriteEndObject();
+        }
+        writer.WriteEndObject();
+    }
+
+    /// <summary>The entries of a stored journal that are entries: an id, a meter, a count of at least 1, a time and a kind; the others are left out.</summary>
+    private static List<SpendEntry>? Spends(JsonElement list)
+    {
+        var read = new List<SpendEntry>();
+        foreach (var item in list.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object) continue;
+            var members = Json.Properties(item).ToDictionary(p => p.Key, p => p.Value, StringComparer.Ordinal);
+            if (members.TryGetValue("id", out var id) && Json.StringOf(id) is { } idText
+                && members.TryGetValue("meter", out var meter) && Json.StringOf(meter) is { } meterText
+                && members.TryGetValue("n", out var n) && Safe(n) is { } count and >= 1
+                && members.TryGetValue("at", out var at) && Safe(at) is { } time and >= 0
+                && members.TryGetValue("kind", out var kind) && Names.SpendKindOf(Json.StringOf(kind)) is { } spendKind)
+            {
+                read.Add(new SpendEntry(idText, meterText, count, time, spendKind));
+            }
+        }
+        return read.Count > 0 ? read : null;
+    }
+
+    /// <summary>The figures of a stored <c>meterFigures</c> that are figures: three whole figures and a time, <c>resets</c> true only for JSON <c>true</c>.</summary>
+    private static Dictionary<string, MeterFigure>? Figures(JsonElement all)
+    {
+        var read = new Dictionary<string, MeterFigure>(StringComparer.Ordinal);
+        foreach (var (code, member) in Json.Properties(all))
+        {
+            if (member.ValueKind != JsonValueKind.Object) continue;
+            var members = Json.Properties(member).ToDictionary(p => p.Key, p => p.Value, StringComparer.Ordinal);
+            if (members.TryGetValue("left", out var left) && Safe(left) is { } l and >= 0
+                && members.TryGetValue("total", out var total) && Safe(total) is { } t and >= 0
+                && members.TryGetValue("offline", out var offline) && Safe(offline) is { } o and >= 0
+                && members.TryGetValue("at", out var at) && Safe(at) is { } time and >= 0)
+            {
+                read[code] = new MeterFigure(l, t, o, members.TryGetValue("resets", out var resets) && resets.ValueKind == JsonValueKind.True, time);
+            }
+        }
+        return read.Count > 0 ? read : null;
+    }
+
+    private static long? Safe(JsonElement value) => Json.SafeInteger(value);
 
     private static string? String(JsonElement value) => Json.StringOf(value);
 

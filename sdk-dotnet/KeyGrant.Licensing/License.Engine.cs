@@ -167,24 +167,15 @@ public sealed partial class License
     /// <summary>The install's kind as it bears on this device: none when nothing is held.</summary>
     private DeviceKind? InstallKind(DeviceKind? stored) => deviceHold ? stored : null;
 
-    /// <summary>The stored state; <paramref name="readOnly"/> behind a call that has not finished, so the read writes nothing either.</summary>
-    private async Task<StoredState> LoadAsync(bool readOnly = false) =>
-        await storage.ReadAsync(readOnly).ConfigureAwait(false) ?? new StoredState();
-
     /// <summary>
     /// Persist a patch onto the state as it is stored NOW, not onto a snapshot a call took earlier,
     /// and advance the monotonic clock guard, unless the guard is being brought back on the server's
     /// evidence (<paramref name="guard"/>). What the patch is (<paramref name="basis"/>) decides what of
-    /// it lands on a state another process changed meanwhile.
+    /// it lands on a state another process changed meanwhile. The journal changes this process could not
+    /// save before land with it (<see cref="SaveWithAsync"/>).
     /// </summary>
-    private async Task SaveAsync(StatePatch patch, long? guard = null, Basis? basis = null)
-    {
-        StoredState Merge(StoredState latest) =>
-            StateFields.Set(Offline.Merged(latest, patch, basis), StateField.LastSeen, Offline.SavedLastSeen(latest.LastSeen, clock.Now(), guard));
-
-        if (await storage.UpdateAsync(Merge).ConfigureAwait(false)) return;
-        await storage.WriteAsync(Merge(await LoadAsync().ConfigureAwait(false))).ConfigureAwait(false);
-    }
+    private async Task SaveAsync(StatePatch patch, long? guard = null, Basis? basis = null) =>
+        await SaveWithAsync(patch, guard, basis, []).ConfigureAwait(false);
 
     /// <summary>A save whose failure fails nothing: the answer stands. Whether it was saved.</summary>
     private async Task<bool> SaveBestEffortAsync(StatePatch patch, long? guard = null, Basis? basis = null)
@@ -242,10 +233,13 @@ public sealed partial class License
         var asked = new Asked(EffectiveNow(state), state.ActivationId, state.VerdictAt);
         // A machine id read here keys this install from now on, written with whatever this ask writes.
         var device = await DeviceAsync(TimeSpan.FromMilliseconds(MachineId.TimeoutMs), state.DeviceKind, cancellationToken).ConfigureAwait(false);
+        // The journal of unsynced spends rides along (what is stored, and what this process holds that opens an entry of
+        // its own): the entries the answer names as recorded are dropped with the rest of what it saves.
+        var reports = Meters.SpendsReported(await ReportableAsync(state).ConfigureAwait(false));
         HttpResult? response;
         try
         {
-            response = await PostAsync("validate", ValidateBody(state, device), bound, cancellationToken).ConfigureAwait(false);
+            response = await PostAsync("validate", ValidateBody(state, device, reports), bound, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception) when (!cancellationToken.IsCancellationRequested)
         {
@@ -259,9 +253,28 @@ public sealed partial class License
         }
         var (check, now) = await JudgeFreshAsync(state, response, cancellationToken).ConfigureAwait(false);
         var outcome = Renewal.Outcome(new RenewalInput(response, check, askedAt, now, major, state.Key, state.KeptMajor, device));
-        await SaveBestEffortAsync(outcome.Patch, null, new Basis { Answer = asked }).ConfigureAwait(false);
-        return outcome.Answered ? (true, outcome.Status) : (false, null);
+        var ops = Confirmations(state, response);
+        // An answer that confirms none of what the request reported (the server could not record it) starts the wait of
+        // an answer without a lease, so a journal the server will not take is not offered at every status.
+        var heard = response is not null && !Wire.NoAnswer(response.Status);
+        var patch = reports is not null && heard && ops.Count == 0
+            ? outcome.Patch.With(new StatePatch { [StateField.BackoffSince] = askedAt, [StateField.BackoffMs] = Offline.AskAgainMs })
+            : outcome.Patch;
+        // Saved as the answer to its ask; a save that fails leaves the answer standing, and keeps what it confirmed in memory.
+        await SaveOpsAsync(state, patch, new Basis { Answer = asked }, ops).ConfigureAwait(false);
+        return outcome.Answered ? (true, Metered(outcome.Status, check, state, ops)) : (false, null);
     }
+
+    /// <summary>The journal change an answer's confirmations make, about the activation it was asked for: none when it named none.</summary>
+    private static List<JournalOp> Confirmations(StoredState state, HttpResult? response)
+    {
+        var entries = Meters.SpendsConfirmed(response);
+        return entries.Count > 0 && state.ActivationId is { } about ? [new ConfirmedOp(about, entries)] : [];
+    }
+
+    /// <summary>A licensed answer's status with the meters of the lease that brought it, net of the journal as the answer left it.</summary>
+    private LicenseStatus? Metered(LicenseStatus? status, LeaseCheck? check, StoredState state, IReadOnlyList<JournalOp> ops) =>
+        status is null || check is not { Ok: true } ? status : Meters.Metered(status, check.Claims!, Journal.Land(state, ops, EffectiveNow(state)).State);
 
     /// <summary>
     /// The lease a validate's 200 carried, checked on this device as of the server's time (the clock
@@ -285,19 +298,29 @@ public sealed partial class License
     }
 
     /// <summary>
-    /// A validate's body: with every fingerprint this device answers to when it can tell, so the server
-    /// refuses a state file copied from another machine; with none when it cannot, so a slow read never
-    /// costs an honest device its renewal.
+    /// What a validate and a <c>use</c> both send for the server's device check: with every fingerprint this device
+    /// answers to when it can tell, so the server refuses a state file copied from another machine; with none when it
+    /// cannot, so a slow read never costs an honest device its renewal.
     /// </summary>
-    private JsonObject ValidateBody(StoredState state, Device device)
+    private JsonObject DeviceBody(StoredState state, Device device)
     {
         var body = new JsonObject();
         if (state.Key is not null) body["key"] = state.Key;
         if (state.ActivationId is not null) body["activationId"] = state.ActivationId;
         body["major"] = major;
-        if (state.KeptMajor is { } kept) body["keptMajor"] = kept;
-        if (device.CanTell) body["fingerprints"] = new JsonArray(device.Fingerprints.Select(f => (JsonNode?)JsonValue.Create(f)).ToArray());
+        if (device.CanTell) body["fingerprints"] = Fingerprints(device);
         if (device.CanTell && device.Kind is { } kind) body["fingerprintKind"] = Names.Of(kind);
+        return body;
+    }
+
+    private static JsonArray Fingerprints(Device device) => new(device.Fingerprints.Select(f => (JsonNode?)JsonValue.Create(f)).ToArray());
+
+    /// <summary>A validate's body: the device check, the kept major, the journal's report when there is one, and the key ids.</summary>
+    private JsonObject ValidateBody(StoredState state, Device device, JsonArray? reports)
+    {
+        var body = DeviceBody(state, device);
+        if (state.KeptMajor is { } kept) body["keptMajor"] = kept;
+        if (reports is not null) body["spends"] = reports;
         body["kids"] = KidsJson();
         return body;
     }

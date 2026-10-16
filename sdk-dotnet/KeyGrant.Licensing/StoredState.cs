@@ -88,6 +88,20 @@ public sealed record StoredState
     public string? LicenseFile { get; init; }
 
     /// <summary>
+    /// The journal of this device's spends KeyGrant has not confirmed yet (<see cref="SpendEntry"/>), oldest first, about the
+    /// stored activation: reported with the next check-in, <see cref="License.UseAsync"/> or
+    /// <see cref="License.DeactivateAsync"/>, and dropped only when the server confirms it. At most 64 entries. Null for none:
+    /// an empty journal is stored as the field absent.
+    /// </summary>
+    public IReadOnlyList<SpendEntry>? Spends { get; init; }
+
+    /// <summary>
+    /// The newest figures a <see cref="License.UseAsync"/> answer gave for each meter, by code, about the stored activation:
+    /// newer than the stored lease's own until the lease is renewed. Null for none.
+    /// </summary>
+    public IReadOnlyDictionary<string, MeterFigure>? MeterFigures { get; init; }
+
+    /// <summary>
     /// Fields this SDK does not know (written by another SDK or a later version), kept as they were
     /// and written back. One nested more than 64 levels deep is kept, and written back, too, as its text
     /// only: holding it here would take time growing with the square of its depth. A retired field's
@@ -137,6 +151,8 @@ public sealed record StoredState
             && Rev == other.Rev
             && TrialReportedAt == other.TrialReportedAt
             && LicenseFile == other.LicenseFile
+            && SameSpends(Spends, other.Spends)
+            && SameFigures(MeterFigures, other.MeterFigures)
             && SameFields(AdditionalFields, other.AdditionalFields)
             && SameText(DeepFields, other.DeepFields);
     }
@@ -155,6 +171,7 @@ public sealed record StoredState
         hash.Add(Refused);
         hash.Add(VerdictAt);
         hash.Add(Rev);
+        hash.Add(Spends?.Count ?? 0);
         return hash.ToHashCode();
     }
 
@@ -162,6 +179,20 @@ public sealed record StoredState
     {
         if (a is null || b is null) return a is null && b is null;
         return a.SequenceEqual(b, StringComparer.Ordinal);
+    }
+
+    private static bool SameSpends(IReadOnlyList<SpendEntry>? a, IReadOnlyList<SpendEntry>? b) =>
+        (a is null || a.Count == 0) ? (b is null || b.Count == 0) : b is not null && a.SequenceEqual(b);
+
+    private static bool SameFigures(IReadOnlyDictionary<string, MeterFigure>? a, IReadOnlyDictionary<string, MeterFigure>? b)
+    {
+        if ((a?.Count ?? 0) != (b?.Count ?? 0)) return false;
+        if (a is null || b is null) return true;
+        foreach (var (code, figure) in a)
+        {
+            if (!b.TryGetValue(code, out var theirs) || figure != theirs) return false;
+        }
+        return true;
     }
 
     private static bool SameFields(IReadOnlyDictionary<string, JsonElement>? a, IReadOnlyDictionary<string, JsonElement>? b)

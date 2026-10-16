@@ -27,6 +27,9 @@ internal sealed record LeaseInput
 
     /// <summary>The <c>ent</c> claim as signed, any JSON (null signs <c>"ent":null</c>): the server signs only a well-formed one, but an SDK still has to read whatever is signed.</summary>
     public JsonNode? Ent { get; init; } = new JsonObject();
+
+    /// <summary>The <c>met</c> claim as signed, any JSON (null signs none): the server signs only a well-formed one, but an SDK still has to read whatever is signed.</summary>
+    public JsonNode? Met { get; init; }
 }
 
 /// <summary>An Ed25519 key that signs leases as the server does (a compact JWS, EdDSA).</summary>
@@ -96,6 +99,7 @@ internal sealed class TestSigner
         if (input.MinMajor is { } min) claims["minMajor"] = min;
         if (input.UpgradeUntil is { } until) claims["upgradeUntil"] = until;
         claims["ent"] = input.Ent?.DeepClone();
+        if (input.Met is not null) claims["met"] = input.Met.DeepClone();
         if (input.Grace is { } grace) claims["grace"] = grace;
         if (input.Test is { } test) claims["test"] = test;
         claims["iss"] = "keygrant";

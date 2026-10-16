@@ -107,6 +107,47 @@ internal static class Names
         _ => throw new ArgumentOutOfRangeException(nameof(error)),
     };
 
+    public static string Of(UseError error) => error switch
+    {
+        UseError.InvalidAmount => "invalid-amount",
+        UseError.NoMeter => "no-meter",
+        UseError.UsedUp => "used-up",
+        UseError.OfflineLimit => "offline-limit",
+        UseError.NotLicensed => "not-licensed",
+        UseError.Storage => "storage",
+        UseError.Revoked => "revoked",
+        UseError.Upgrade => "upgrade",
+        UseError.Outdated => "outdated",
+        UseError.Device => "device",
+        _ => throw new ArgumentOutOfRangeException(nameof(error)),
+    };
+
+    /// <summary>The use error a stored refusal is answered with.</summary>
+    public static UseError UseErrorOf(Refusal refusal) => refusal switch
+    {
+        Refusal.Revoked => UseError.Revoked,
+        Refusal.Upgrade => UseError.Upgrade,
+        Refusal.Outdated => UseError.Outdated,
+        Refusal.Device => UseError.Device,
+        _ => throw new ArgumentOutOfRangeException(nameof(refusal)),
+    };
+
+    public static string Of(SpendKind kind) => kind switch
+    {
+        SpendKind.Offline => "offline",
+        SpendKind.Unanswered => "unanswered",
+        SpendKind.Void => "void",
+        _ => throw new ArgumentOutOfRangeException(nameof(kind)),
+    };
+
+    public static SpendKind? SpendKindOf(string? word) => word switch
+    {
+        "offline" => SpendKind.Offline,
+        "unanswered" => SpendKind.Unanswered,
+        "void" => SpendKind.Void,
+        _ => null,
+    };
+
     /// <summary>The status reason a refusal is answered with.</summary>
     public static LicenseReason ReasonOf(Refusal refusal) => refusal switch
     {

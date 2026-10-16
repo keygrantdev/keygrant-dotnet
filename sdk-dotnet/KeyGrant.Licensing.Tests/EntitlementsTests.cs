@@ -352,10 +352,11 @@ public class EntitlementsTests
         Entitlements = Pro(),
         Source = LicenseSource.File,
         LicensedTo = new LicensedTo("Ada Lovelace", "ada@example.com"),
+        Meters = new Dictionary<string, MeterStatus> { ["exports"] = new(90, 100, 10, 0, false) },
     };
 
     /// <summary>Every member of a status, each of which the theory below changes on its own.</summary>
-    private static readonly string[] MemberNames = { "State", "Reason", "Key", "TrialDaysLeft", "TrialEndsAt", "Test", "Stalled", "Entitlements", "Source", "LicensedTo" };
+    private static readonly string[] MemberNames = { "State", "Reason", "Key", "TrialDaysLeft", "TrialEndsAt", "Test", "Stalled", "Entitlements", "Source", "LicensedTo", "Meters" };
 
     public static TheoryData<string> Members => new(MemberNames);
 
@@ -377,6 +378,7 @@ public class EntitlementsTests
             "Entitlements" => status with { Entitlements = new Dictionary<string, Entitlement>(Pro()) { ["edition"] = new("studio") } },
             "Source" => status with { Source = null },
             "LicensedTo" => status with { LicensedTo = new LicensedTo("Ada Lovelace", null) },
+            "Meters" => status with { Meters = new Dictionary<string, MeterStatus> { ["exports"] = new(89, 100, 10, 1, false) } },
             _ => throw new ArgumentOutOfRangeException(nameof(member), member, "not a member of LicenseStatus this theory changes"),
         };
         Assert.False(status.Equals(other), $"{member}: equal");
@@ -386,6 +388,39 @@ public class EntitlementsTests
         // Built again from nothing, the same status is equal, with the same hash.
         Assert.Equal(status, EveryMemberSet());
         Assert.Equal(status.GetHashCode(), EveryMemberSet().GetHashCode());
+    }
+
+    [Fact]
+    public void Compares_meters_by_content_whatever_the_order_they_were_given_in_with_the_same_hash()
+    {
+        var exports = new MeterStatus(90, 100, 10, 0, false);
+        var renders = new MeterStatus(5, 5, 0, 0, true);
+        var one = EveryMemberSet() with { Meters = new Dictionary<string, MeterStatus> { ["exports"] = exports, ["renders"] = renders } };
+        var other = EveryMemberSet() with { Meters = new Dictionary<string, MeterStatus> { ["renders"] = renders, ["exports"] = exports } };
+        Assert.True(one.Equals(other));
+        Assert.True(other.Equals(one));
+        Assert.Equal(one.GetHashCode(), other.GetHashCode());
+        Assert.NotSame(one.Meters, other.Meters);
+    }
+
+    [Fact]
+    public void Tells_meters_of_another_count_or_another_meter_apart()
+    {
+        var exports = new MeterStatus(90, 100, 10, 0, false);
+        var renders = new MeterStatus(5, 5, 0, 0, true);
+        var two = EveryMemberSet() with { Meters = new Dictionary<string, MeterStatus> { ["exports"] = exports, ["renders"] = renders } };
+        var one = EveryMemberSet() with { Meters = new Dictionary<string, MeterStatus> { ["exports"] = exports } };
+        var none = EveryMemberSet() with { Meters = new Dictionary<string, MeterStatus>() };
+        Assert.False(two.Equals(one));
+        Assert.False(one.Equals(two));
+        Assert.False(one.Equals(none));
+        // The same number of meters, one of them another meter.
+        var named = EveryMemberSet() with { Meters = new Dictionary<string, MeterStatus> { ["exports"] = exports, ["credits"] = renders } };
+        Assert.False(two.Equals(named));
+        Assert.False(named.Equals(two));
+        // None given is none, however it is given.
+        Assert.True(none.Equals(EveryMemberSet() with { Meters = null! }));
+        Assert.Empty((EveryMemberSet() with { Meters = null! }).Meters);
     }
 
     [Fact]
@@ -405,15 +440,27 @@ public class EntitlementsTests
     {
         Assert.Equal(
             "LicenseStatus { State = Licensed, Reason = , Key = SLUICE-ENTL-ENTL-ENTL-ENTL, TrialDaysLeft = , TrialEndsAt = , Test = False, "
-                + "Entitlements = { beta = false, edition = pro, seats = 5 }, Stalled = False, Source = , LicensedTo =  }",
+                + "Entitlements = { beta = false, edition = pro, seats = 5 }, Meters = { }, Stalled = False, Source = , LicensedTo =  }",
             LicensedPro.ToString());
         var trial = new LicenseStatus { State = LicenseState.Trial, TrialDaysLeft = 5, TrialEndsAt = 1_757_432_000_000, Test = true, Stalled = true };
         Assert.Equal(
-            "LicenseStatus { State = Trial, Reason = , Key = , TrialDaysLeft = 5, TrialEndsAt = 1757432000000, Test = True, Entitlements = { }, Stalled = True, Source = , LicensedTo =  }",
+            "LicenseStatus { State = Trial, Reason = , Key = , TrialDaysLeft = 5, TrialEndsAt = 1757432000000, Test = True, Entitlements = { }, Meters = { }, Stalled = True, Source = , LicensedTo =  }",
             trial.ToString());
         Assert.Equal(
-            "LicenseStatus { State = Invalid, Reason = Revoked, Key = K, TrialDaysLeft = , TrialEndsAt = , Test = False, Entitlements = { }, Stalled = False, Source = , LicensedTo =  }",
+            "LicenseStatus { State = Invalid, Reason = Revoked, Key = K, TrialDaysLeft = , TrialEndsAt = , Test = False, Entitlements = { }, Meters = { }, Stalled = False, Source = , LicensedTo =  }",
             new LicenseStatus { State = LicenseState.Invalid, Reason = LicenseReason.Revoked, Key = "K" }.ToString());
+    }
+
+    [Fact]
+    public void Prints_its_meters_by_content_in_name_order()
+    {
+        var status = new LicenseStatus
+        {
+            State = LicenseState.Licensed,
+            Key = "K",
+            Meters = new Dictionary<string, MeterStatus> { ["renders"] = new(5, 5, 0, 0, true), ["exports"] = new(88, 100, 10, 2, false) },
+        };
+        Assert.Contains("Meters = { exports = MeterStatus { Left = 88, Total = 100, Offline = 10, Unsynced = 2, Resets = False }, renders = MeterStatus { Left = 5, Total = 5, Offline = 0, Unsynced = 0, Resets = True } }", status.ToString());
     }
 }
 

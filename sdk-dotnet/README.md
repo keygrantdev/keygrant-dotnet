@@ -299,6 +299,75 @@ tries; the key is judged first, then the address, then the code. A key that is n
 they reach the server. `ImportLicenseFileAsync(content, options)` passes them on to a key file's key.
 `DeactivateAsync()`, `RefreshAsync()` and `StartTrialAsync()` take neither.
 
+## Metered uses: counting what a key may do
+
+A licence model can count uses of what it sells: 1,000 exports for good, or 50 renders each billing
+period. The app spends them with `UseAsync(meter, n)`, before the work they count, and does the work only
+when the spend is `Ok`:
+
+```csharp
+UseResult spent = await license.UseAsync("exports"); // UseAsync("exports", 40) spends forty at once, whole or none
+if (spent.Ok)
+{
+    RunExport(); // spent.Left: what is left now, net of this device's unsynced spends
+}
+else
+{
+    switch (spent.Error)
+    {
+        case UseError.UsedUp:
+            OfferMoreExports(spent.Left);   // the server's word: fewer left than asked (null when it gave none)
+            break;
+        case UseError.OfflineLimit:
+            AskToConnect();                 // KeyGrant could not be reached, and this is past what this device may spend without it
+            break;
+        default:
+            ShowMeterProblem(spent.Error);  // NoMeter, NotLicensed, Revoked, Device, Upgrade, Outdated, Storage, InvalidAmount
+            break;
+    }
+}
+
+LicenseStatus status = await license.StatusAsync(); // offline, from the lease
+status.Meters["exports"]; // MeterStatus { Left = 950, Total = 1000, Offline = 100, Unsynced = 0, Resets = false }
+```
+
+- **Online it is exact.** The server takes `n` only while the meter has room for all of it. Two calls are
+  two spends; the SDK's own retries and reports never count one twice.
+- **With no answer it spends from an allowance.** No network, a timeout, a 5xx, a 429 or an answer the SDK
+  cannot use: the device spends from its offline allowance for that meter (set on the licence model; a
+  tenth of the meter by default, 0 for online only), never past what it last heard is left, and reports
+  the spend with its next check-in (`UseResult.Offline` is true). Past either, `OfflineLimit`. A spend the
+  allowance would refuse asks the server first, whatever the last outage left behind, so a customer who is
+  back online is not refused for it (once a minute while KeyGrant stays out of reach); one the allowance
+  covers is not asked again for a minute after an outage, growing to an hour. The unsynced spends are
+  kept with the licence (`StoredState.Spends`), so they survive a restart and a second instance of the app,
+  and a spend the SDK cannot save yet is kept in memory: the customer always gets the use they were told
+  they had, and it is reported once it has been saved (a spend in doubt, and the take-back of one refused,
+  are reported with the next request).
+- **It needs a key's lease** that licenses this build on this device (`NotLicensed` otherwise, without
+  asking). A device trial and an offline licence file have no meters.
+- **`DeactivateAsync()` clears the unsynced spends with the licence.** It sends them with the release, but
+  clears them locally even when KeyGrant could not be reached (`Released` is then false), so what the
+  server did not hear is lost: at most the offline allowance of each meter.
+- **It does not throw for an outcome**: every one is in the `UseResult`, and what no adapter can tell it
+  (one threw where there is no word for it) is `Storage`. A `use` request waits at most 5 seconds for the
+  server (less when `HttpTimeout` is shorter). The one exception is a `CancellationToken` cancelled while
+  the call waits its turn, or before its request is sent: it throws `OperationCanceledException` and
+  nothing is spent. Cancelled while the request is out, the call stops waiting and spends as for no
+  answer (the spend is in doubt, so it is reported), never an exception: it RETURNS its result, so read
+  it even after cancelling. No wait is recorded for the ask it cut short, but its journal entry is, and
+  the journal's wait (for a spend the allowance refuses, its void's minute) runs from that entry.
+- **`n` is a `long`**: anything outside 1 to 1,000,000,000 is `InvalidAmount`, and a meter code that is
+  not 1 to 32 UTF-16 units is `NoMeter`, both without asking anything. A code is matched exactly, case
+  included.
+- **`LicenseStatus.Meters`** is there on a `Licensed` status from a key's lease that names meters, and empty
+  on every other status: `Left` is net of this device's unsynced spends, `Total` is what the key holds
+  (for good, or this period), `Offline` is this device's allowance, `Unsynced` what it has spent and not
+  reported, and `Resets` is true for a meter that comes back each billing period.
+- **A meter never takes the licence away.** Nothing reads one to decide whether the app is licensed: a
+  meter that is used up refuses spends, never the app.
+- An app built with an SDK from before meters licenses a metered key as any other and cannot spend.
+
 ## Buying from the app
 
 Give a customer who holds no key a Buy button that opens your Stripe Payment Link. The checkout emails
@@ -318,7 +387,7 @@ link, so an upgrade sale finds the key it upgrades (below).
 ## What each status means
 
 `StatusAsync()` answers a `LicenseStatus` (`State`, `Reason`, `Key`, `TrialDaysLeft`, `TrialEndsAt`,
-`Test`, `Entitlements`, `Stalled`, and `Source` and `LicensedTo` on a status from a licence file):
+`Test`, `Entitlements`, `Meters`, `Stalled`, and `Source` and `LicensedTo` on a status from a licence file):
 
 | State | Reason | Meaning | What to show |
 |---|---|---|---|
@@ -589,8 +658,19 @@ Its behaviour tests cover activation, offline status, renewal, refusals and thei
 never lock out, the clock guard, trials, deactivation, `DeviceHold`, storage that cannot be read, calls
 stuck behind one another, entitlements on every status that carries them, the launch report, a 0.x
 major, licence files (import, refusals, a stored file beside a key and a trial, key files), user-locked
-keys (the address and code sent, each refusal, nothing stored, a key file's key asked too), the file storage (atomic writes, temp recovery, corrupt files,
-revision conflicts between two processes) and the machine-id readers.
+keys (the address and code sent, each refusal, nothing stored, a key file's key asked too), metered uses
+(online and with no answer, the waits, what is asked, a spend held in memory after a failed save, two
+processes over one state file, the allowance judged again where a spend lands, what a validate and a
+deactivate report and what clears the report, the journal's limits and its horizon), the file storage
+(atomic writes, temp recovery, corrupt files, revision conflicts between two processes) and the
+machine-id readers.
+
+A property test (`UsePropertyTests`) runs seeded random sequences of spends, check-ins, releases and
+restarts from two processes over one state file against a server that loses, delays and refuses answers
+(or loses them after recording the spend), a disk that refuses its writes and a clock that jumps, and holds
+the contract's invariants at every step and at the end. `PROPERTY_RUNS` and `PROPERTY_SEED` choose how many
+sequences run and from which seed (1500 from seed 1 by default); a case it finds is shrunk and printed as
+data, to be kept with the cases beside it.
 
 `SystemTests` drive the real readers and writers on the system the suite runs on: the registry, a
 file another process holds and a rename over it (Windows); `/etc/machine-id`, `/proc` and the folder
@@ -617,6 +697,8 @@ Behaviour is the Electron SDK's; these are the differences, each on purpose:
 | The public key is checked when the `License` is created (`ArgumentException`); a JWK holding `d` is refused. | The reference imports it lazily and a bad key makes every `status()` reject. A configuration error belongs at startup. |
 | The default storage does not migrate `<working directory>/.keygrant/<product>.json`. | That path is the legacy location older Electron SDK versions used. `FileStorage.LegacyPath(product)` + `MigrateFrom` reads it if you need to. |
 | Every call (but `UpgradeUrlAsync`) takes a `CancellationToken`. Cancelled while it waits its turn, a call throws `OperationCanceledException`; once running, `StatusAsync`, `RefreshAsync` and `StartTrialAsync` stop waiting and answer what the device holds (never an exception, and no wait recorded for the ask they cut short), while `ActivateAsync` and `DeactivateAsync` throw until the server has answered. | .NET convention; the reference cannot be cancelled. A status is awaited at launch, so a cancellation never turns a licensed answer into an exception. |
+| `UseAsync(meter, long n = 1, cancellationToken)` answers a `UseResult` (`Ok`, `Left`, `Offline`, `Error`), where the reference's `use(meter, n)` answers one object: `Left` is a nullable `long` (null where the reference gives none), `Offline` a flag, `Error` a `UseError`. Cancelled while it waits its turn or before its request is sent, it throws `OperationCanceledException` with nothing spent; cancelled while the request is out, it stops waiting and spends as for no answer and returns its result (read it even after cancelling), never an exception. No wait is recorded for the ask it cut short, but its journal entry is, and the journal's wait runs from it. | .NET convention: a typed result for the reference's union, and a token every call takes. A spend whose request was sent may be held by the server, so cutting the wait short leaves it in doubt (reported with the next request), as a timeout does. |
+| `StoredState.Spends` and `MeterFigures` are typed lists and maps, read leniently as the reference reads them: a journal that is not a list, an entry or a figure of another shape, is read as empty or left out, and so are the unknown members of a valid entry, when the state is read, so any save writes the state without them (the reference drops a malformed entry or figure, and a figure's unknown members, only when a journal change lands, and keeps a valid entry's unknown members). | The journal is the device's own, never the server's word. |
 | `HttpTimeout` must be positive and at most a day. | .NET timers take no more; an unbounded request would defeat the bound. |
 | `Major` is an `int`: a fractional major cannot be configured (the reference cuts one to its whole number), so the `majors` vectors holding a fraction are skipped. A negative one runs as 1, as in the reference. | Idiomatic C#; a version's major is a whole number. |
 | A payment link is read by `System.Uri`, whose normal form differs from the WHATWG parser's in two ways that keep the URL the same: a percent-encoded letter, digit or `-._~` in the query is written as that character, and `'` in the query is left as it is (WHATWG writes `%27`). | The link is read as the platform's URL parser reads it; the query is then edited as text as the reference edits it. |

@@ -1,4 +1,3 @@
-using System.Collections.ObjectModel;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -6,60 +5,6 @@ using Org.BouncyCastle.Crypto.Parameters;
 using Org.BouncyCastle.Crypto.Signers;
 
 namespace KeyGrant.Licensing.Internal;
-
-/// <summary>
-/// A lease's claims, as the server signs them (seconds since the epoch for every time). Unknown claims are
-/// ignored; <c>major</c> defaults to 0, and <c>ent</c> is read leniently (<see cref="ClaimsParser"/>):
-/// absent or malformed is none.
-/// </summary>
-internal sealed record LeaseClaims
-{
-    public required string Iss { get; init; }
-    public required string Sub { get; init; }
-    public required string Product { get; init; }
-    public required string Aid { get; init; }
-    public string? Fp { get; init; }
-    public DeviceKind? Fpk { get; init; }
-    public required string Model { get; init; }
-    public long Lim { get; init; }
-    public long Major { get; init; }
-    public long? MinMajor { get; init; }
-    public long? UpgradeUntil { get; init; }
-    public IReadOnlyDictionary<string, Entitlement> Ent { get; init; } = ReadOnlyDictionary<string, Entitlement>.Empty;
-    public long Iat { get; init; }
-    public long Exp { get; init; }
-    public bool? Grace { get; init; }
-    public bool? Test { get; init; }
-}
-
-/// <summary>Why a lease failed verification.</summary>
-internal enum VerifyFailure
-{
-    Malformed,
-    /// <summary>The lease names a key (<c>kid</c>) the key set does not hold.</summary>
-    UnknownKey,
-    BadSignature,
-    BadClaims,
-    Expired,
-}
-
-/// <summary>A lease verified offline: valid with its claims, or why not (an expired one with its claims).</summary>
-internal sealed record VerifyResult(bool Valid, VerifyFailure? Reason, LeaseClaims? Claims)
-{
-    public static VerifyResult Ok(LeaseClaims claims) => new(true, null, claims);
-
-    public static VerifyResult Failed(VerifyFailure reason, LeaseClaims? claims = null) => new(false, reason, claims);
-
-    public static string NameOf(VerifyFailure reason) => reason switch
-    {
-        VerifyFailure.Malformed => "malformed",
-        VerifyFailure.UnknownKey => "unknown-key",
-        VerifyFailure.BadSignature => "bad-signature",
-        VerifyFailure.BadClaims => "bad-claims",
-        VerifyFailure.Expired => "expired",
-        _ => throw new ArgumentOutOfRangeException(nameof(reason)),
-    };
-}
 
 /// <summary>
 /// The lease verifier, against a product's key set: the key a lease names by its id (<c>kid</c>), or each
@@ -215,13 +160,14 @@ internal static partial class ClaimsParser
     /// <summary>The claims the schema checks; any other is stripped and never read.</summary>
     private static readonly HashSet<string> Checked = new(StringComparer.Ordinal)
     {
-        "iss", "sub", "product", "aid", "fp", "fpk", "model", "lim", "major", "minMajor", "upgradeUntil", "ent", "iat", "exp", "grace", "test",
+        "iss", "sub", "product", "aid", "fp", "fpk", "model", "lim", "major", "minMajor", "upgradeUntil", "ent", "met", "iat", "exp", "grace", "test",
     };
 
     /// <summary>
     /// The claims in a payload's text, or null when it is not JSON or not their shape. Read to any depth
     /// JSON.parse reads, in one pass: an unknown claim is never read however it nests, nor a member of
-    /// <c>ent</c> that is not a flag, a number or a text (<see cref="EntitlementsOf"/>); every other claim
+    /// <c>ent</c> that is not a flag, a number or a text (<see cref="EntitlementsOf"/>), nor of <c>met</c> that is
+    /// not a well-formed meter (<see cref="MetersOf(RawJson?)"/>); every other claim
     /// the schema checks is a string, a number or a boolean, so one nested deeper than
     /// <see cref="TopLevelJson.ElementDepth"/> fails as the schema fails it. Never throws: a string .NET cannot
     /// hold (an escaped lone surrogate) in a claim the schema checks is no claim it could check either.
@@ -236,19 +182,25 @@ internal static partial class ClaimsParser
             // reads.
             var fields = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
             RawJson? ent = null;
+            RawJson? met = null;
             foreach (var (name, value) in top.Members)
             {
                 if (!Checked.Contains(name)) continue;
-                // Read leniently, however it nests: it never costs the lease.
+                // Read leniently, however it nests: neither costs the lease.
                 if (name == "ent")
                 {
                     ent = value;
                     continue;
                 }
+                if (name == "met")
+                {
+                    met = value;
+                    continue;
+                }
                 if (!value.Holdable) return null;
                 fields[name] = value.Element();
             }
-            return FromFields(fields, ent);
+            return FromFields(fields, ent, met);
         }
         catch (Exception)
         {
@@ -256,8 +208,8 @@ internal static partial class ClaimsParser
         }
     }
 
-    /// <summary>The claims, each group checked as the schema checks it, the first that fails failing them all; <c>ent</c> never fails.</summary>
-    private static LeaseClaims? FromFields(Dictionary<string, JsonElement> fields, RawJson? ent)
+    /// <summary>The claims, each group checked as the schema checks it, the first that fails failing them all; <c>ent</c> and <c>met</c> never fail.</summary>
+    private static LeaseClaims? FromFields(Dictionary<string, JsonElement> fields, RawJson? ent, RawJson? met)
     {
         if (!Holder(fields, out var sub, out var product, out var aid)) return null;
         if (!Seat(fields, out var fp, out var fpk)) return null;
@@ -280,6 +232,7 @@ internal static partial class ClaimsParser
             MinMajor = coverage.MinMajor,
             UpgradeUntil = coverage.UpgradeUntil,
             Ent = EntitlementsOf(ent),
+            Met = met is { } raw ? MetersOf(raw) : null,
             Iat = iat,
             Exp = exp,
             Grace = grace,
