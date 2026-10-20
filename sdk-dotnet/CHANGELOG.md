@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.8.0
+
+- Key pickup, for a build that may not take a typed licence key (an App Store build): a web buyer restores their
+  licence by the address the key was sold to. `License.PickUpAsync(email)` mails a code to the address
+  (`PickUpSentResult.Ok` whether or not the address holds a key); `License.PickUpAsync(email, code)` hands back the
+  address's keys of the product (`PickUpKeysResult.Keys`, each a `PickedKey`: `Key`, `Model`, `ModelName`, `State`,
+  `Entitlements`, `ExpiresAt`, `Versions`, `DeviceLimit`, `ActiveDevices`, `Held`, `Sale`, `ActivationCode`), each marked
+  `Held` when this device already holds a seat on it (the confirm names the device's fingerprints, as a validate does,
+  when it can tell who it is); and `License.RestoreByEmailAsync(email, code)` confirms the code and activates the key
+  that fits this build (the one this device holds a seat on, else one with a free seat, else the first, of the keys
+  that cover the build's major) as `ActivateAsync(key, options)` would, with the address and, for a code-locked key, the
+  code the pickup handed back. The product's Key pickup must be on.
+- The errors are `PickupError` (`InvalidEmail`, `WrongCode`, `CodeExpired`, `TooManyAttempts`, `PickupDisabled`,
+  `TryAgain`, `Network`) with the server's `RetryAfter` (seconds, from its answer's body), and a `RestoreResult` that
+  holds a refusal in `PickupError`, `NoKey` or `Error` (a `LicenseError`: `Upgrade` or `Outdated` when none of the keys
+  covers the build, then `ActivateAsync`'s own). A blank address or a code that is not six digits (spaces inside it are
+  dropped first) is refused by the SDK itself before the server is asked, so a mistyped code costs the address none of
+  its wrong tries. A `switch` over every `LicenseError` is unchanged.
+- The keys a confirm answered are kept in memory (never stored) for 10 minutes by the address and code as sent: a
+  confirm or a restore with the same pair answers from them and asks nothing, since the first confirm spent the code,
+  so a restore whose activation got no answer can be retried with the same code. A restore that activates drops them.
+- Nothing else about a pickup is stored: not the address, the code or a refusal. The two `PickUpAsync` calls write
+  nothing and run beside any call; `RestoreByEmailAsync` runs one at a time with the rest, answers
+  `LicenseError.Network` behind a call that has not finished (as `ActivateAsync` does), and stores only the
+  activation. A pickup never takes a licence away. The conformance vectors' four new groups, `pickupAsks`,
+  `pickupRefusals`, `pickedKeys` and `pickupChoices`, hold it to the reference.
+
 ## 0.7.0
 
 - Metered uses: `License.UseAsync(meter, n = 1, cancellationToken)` spends `n` uses of a meter the key's licence

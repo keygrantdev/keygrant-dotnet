@@ -368,6 +368,63 @@ status.Meters["exports"]; // MeterStatus { Left = 950, Total = 1000, Offline = 1
   meter that is used up refuses spends, never the app.
 - An app built with an SDK from before meters licenses a metered key as any other and cannot spend.
 
+## Restoring a licence without the key (App Store builds)
+
+A build that may not take a typed licence key (an App Store build) restores a web buyer's licence by the
+address the key was sold to. The product's **Key pickup** must be on. The app asks for a code, the customer
+types the code that comes to that address, and the SDK activates the key that fits this build:
+
+```csharp
+// 1. Mail a code to the address the key was sold to (the answer is the same whether or not the address holds a key).
+PickUpSentResult sent = await license.PickUpAsync(emailBox.Text);
+
+// 2. The customer types the code; restore.
+RestoreResult restored = await license.RestoreByEmailAsync(emailBox.Text, codeBox.Text);
+if (!restored.Ok)
+{
+    switch (restored.PickupError)
+    {
+        case PickupError.WrongCode: AskAgain(); break;
+        case PickupError.CodeExpired: await license.PickUpAsync(emailBox.Text); break;  // a new code
+        case PickupError.TooManyAttempts or PickupError.TryAgain: WaitSeconds(restored.RetryAfter); break;
+    }
+    if (restored.NoKey) ShowNoKeyUnderThatAddress();
+    if (restored.Error is LicenseError.Upgrade) OfferAnUpgrade();      // the keys are for an older major
+    if (restored.Error is LicenseError.Outdated) AskToUpdateTheApp();  // the keys start at a later major
+}
+```
+
+`PickUpAsync(email, code)` hands back the address's keys instead (`PickUpKeysResult.Keys`: show them by
+`ModelName`, never the key) for an app that lets the customer choose; activate one with
+`ActivateAsync(picked.Key, new ActivateOptions { Email = address, Code = picked.ActivationCode })`.
+`RestoreByEmailAsync` chooses for the customer, among the keys that cover this build's major: the key this
+device already holds a seat on, else one with a free seat, else the first.
+
+| `PickupError` | Means | The app |
+|---|---|---|
+| `InvalidEmail` | the address is blank or longer than any | ask again |
+| `WrongCode` | not six digits, or not the address's live code | ask again |
+| `CodeExpired` | no live code (expired after 10 minutes, used, burnt by its fifth wrong try, or never asked for) | `PickUpAsync(email)` again |
+| `TooManyAttempts` | thirty wrong codes for the address this hour, or too many asks or confirms from this network | wait `RetryAfter` seconds |
+| `PickupDisabled` | the product's Key pickup is off | offer another way (support) |
+| `TryAgain` | a count could not be made | retry |
+| `Network` | no answer, or an answer that is not a pickup's | retry |
+
+`RestoreResult` holds a refusal in one of three members: `PickupError` (the code was not taken), `NoKey` (the
+address holds no key of the product) or `Error`, a `LicenseError`: `Upgrade` (the keys are for an older major
+than this build) or `Outdated` (their lowest version is newer), activating nothing, then `ActivateAsync`'s own
+errors (`Limit`, `Revoked`, ...) as they come, and `Network` behind a call that has not finished. The address and the
+code are prepared as an activation's are (trimmed, a code's spaces dropped) and refused at once, asking nothing,
+when the address is blank or the code is not six digits, so a mistyped code costs the address none of its wrong
+tries. `RetryAfter` is read from the server's answer. The first confirm spends the code, so the keys it answered are
+kept in memory for 10 minutes (a code's life) by the address and code as sent: a confirm or a restore with the same
+pair answers from them and asks nothing, so a restore whose activation got no answer can be retried with the same
+code, and a restore after `PickUpAsync(email, code)` needs no new one. A restore that activates drops them. Nothing
+about a pickup is stored (not the address, the code, the keys or a refusal): the two `PickUpAsync` calls write nothing
+and run beside any call, and `RestoreByEmailAsync` stores only the activation, as `ActivateAsync` does, and runs one at
+a time with it. A pickup never takes a licence away. The rules are in the SDK contract's section on key pickup, which
+the conformance vectors `pickupAsks`, `pickupRefusals`, `pickedKeys` and `pickupChoices` hold this SDK to.
+
 ## Buying from the app
 
 Give a customer who holds no key a Buy button that opens your Stripe Payment Link. The checkout emails
@@ -647,8 +704,10 @@ no verdict, a trial's status from its start and its trial lease (entitlements in
 the bits of the double each entitlement number reads as, the major a build runs as, the link
 `UpgradeUrlAsync` builds, when a running trial reports its launch, a key's id and a lease against a key
 set, what entitlements grant, and licence files (the token a file's content holds, a file verified,
-judged and given as a status, and a file given where a lease goes), and user-locked keys (what an
-activation sends for the address and code a person typed, and the error each word of a refusal gives).
+judged and given as a status, and a file given where a lease goes), user-locked keys (what an
+activation sends for the address and code a person typed, and the error each word of a refusal gives), and key
+pickup (what a pickup sends for what a person typed, the error of each refusal, the keys a confirm hands back as
+read, and the key a restore activates).
 That is every group and every vector but the Windows `machineIds`
 cases, which script `reg.exe`'s output, which this SDK does not parse (it reads the registry), and the
 `majors` cases holding a fraction, which an `int` major cannot hold. A group the file holds that the
@@ -658,7 +717,9 @@ Its behaviour tests cover activation, offline status, renewal, refusals and thei
 never lock out, the clock guard, trials, deactivation, `DeviceHold`, storage that cannot be read, calls
 stuck behind one another, entitlements on every status that carries them, the launch report, a 0.x
 major, licence files (import, refusals, a stored file beside a key and a trial, key files), user-locked
-keys (the address and code sent, each refusal, nothing stored, a key file's key asked too), metered uses
+keys (the address and code sent, each refusal, nothing stored, a key file's key asked too), key pickup (the
+requests, every refusal, nothing written by `PickUpAsync`, a restore's activation with the address and the activation
+code, `NoKey`, `Upgrade` and `Outdated`, the keys kept in memory, a pickup behind an unfinished call), metered uses
 (online and with no answer, the waits, what is asked, a spend held in memory after a failed save, two
 processes over one state file, the allowance judged again where a spend lands, what a validate and a
 deactivate report and what clears the report, the journal's limits and its horizon), the file storage
@@ -711,6 +772,7 @@ Behaviour is the Electron SDK's; these are the differences, each on purpose:
 | `WindowsRegistryStash` is this SDK's own (the Electron SDK ships only a no-op stash), in the format every KeyGrant SDK keeps: `REG_QWORD` milliseconds written; a `REG_QWORD` or a decimal `REG_SZ` read; another type, 0 or less, or 2^53 or more is no evidence. | So a reinstall cannot reset a trial on Windows, whichever SDK stashed it. A value that cannot be a time would start the trial in 1970 on the server, or have it refused. |
 | A string in a server body, or in a lease claim the SDK reads (`sub`, `aid`, ...), holding an escaped lone surrogate is no string: no verdict, or `bad-claims`. Anywhere else in a body (a member the SDK does not read) it costs nothing else in the answer; unknown claims are fine. An entitlement whose name or text holds one is dropped, as a malformed member is: the licence and the other entitlements stay, where the reference would keep it. The default HTTP adapter reads a body as UTF-8 whatever charset the response names, as `fetch` does. | System.Text.Json cannot hold one, and an exception there would fail a status. The server never signs an entitlement name or text holding one. |
 | `ActivateAsync(key, options)` and `ImportLicenseFileAsync(content, options)` are overloads, with the options before the `CancellationToken`, where the reference takes an optional second argument; a code is text here, where the reference also reads a code kept as a number. | .NET convention: the existing calls keep their shape. A typed port takes text. |
+| `PickUpAsync(email)` and `PickUpAsync(email, code)` are overloads, as the reference's `pickUp` is, and a pickup's refusal is `PickupError` (with `RetryAfter`) where the reference's one `error` holds it. `RestoreByEmailAsync` holds its refusal in three members (`PickupError`, `NoKey`, `Error`), where the reference's one `error` holds any of the words. Cancelled before its request is answered, a `PickUpAsync` call throws `OperationCanceledException`. | .NET convention: a typed result for the reference's union, and a token every call takes. |
 | `ImportLicenseFileAsync` answers a refusal (`Error`) and a key file's failed activation (`ActivateError`) in two members, where the reference's one `error` holds either word; a whole number in a licence file's claims past a `long` is held at its end. | Idiomatic C#: each typed. Majors are compared as the reference compares doubles, so every build is judged alike. |
 | A key is upper-cased with `ToUpperInvariant` (simple case mapping); JavaScript's `toUpperCase` maps fully (`ß` to `SS`). Trimming uses JavaScript's white space exactly. | The key alphabet is ASCII, where they agree. |
 | `Test` and `Stalled` are `false` rather than absent, and `Entitlements` empty rather than absent, with `LicenseStatus` comparing it by content; times are `long` milliseconds; `HttpResult.Json` is a `JsonNode`; `IStorageAdapter.UpdateAsync` and `IFingerprinter.IdentifyAsync` are default interface methods (returning `false` / `null` for "not implemented"). | Idiomatic C# for the reference's optional members. |

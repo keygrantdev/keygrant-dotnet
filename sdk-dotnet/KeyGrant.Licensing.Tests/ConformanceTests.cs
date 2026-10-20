@@ -26,6 +26,7 @@ public partial class ConformanceTests
         "licenseFileContainers", "licenseFiles", "filesAsLeases",
         "typedFor", "userLockErrors",
         .. MeterGroups,
+        .. PickupGroups,
     ];
 
     private static readonly string[] NotGroups = ["$comment", "conventions", "publicJwk", "constants"];

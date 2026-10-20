@@ -5,7 +5,7 @@ using static KeyGrant.Licensing.Tests.Support.Vectors;
 
 namespace KeyGrant.Licensing.Tests;
 
-// The metered-uses groups, which close the file: a lease's met claim, what a call to use asks for, the figures
+// The metered-uses groups, which come before the key-pickup groups that close the file: a lease's met claim, what a call to use asks for, the figures
 // a lease and the device's own saved figures give, when a call asks the server, how a use answer and the journal
 // of unsynced spends land, and the report a request carries and the confirmations an answer gives back.
 public partial class ConformanceTests
@@ -40,10 +40,10 @@ public partial class ConformanceTests
     }
 
     [Fact]
-    public void The_metered_groups_close_the_file_in_their_order()
+    public void The_metered_groups_come_before_the_pickup_groups_in_their_order()
     {
         var groups = All.Select(p => p.Key).Where(k => !NotGroups.Contains(k)).ToList();
-        Assert.Equal(MeterGroups, groups.TakeLast(MeterGroups.Length));
+        Assert.Equal(MeterGroups, groups.SkipLast(PickupGroups.Length).TakeLast(MeterGroups.Length));
     }
 
     [Theory]
