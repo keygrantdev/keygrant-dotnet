@@ -684,6 +684,8 @@ checkout through it extends the key the customer holds instead of minting anothe
 parameters and its fragment are kept as written, and any `client_reference_id` already on it is
 replaced.
 
+Selling through Paddle? Pass your own checkout page's address instead of a payment link: the page reads `client_reference_id` from its address and gives it to Paddle.js as custom data (`customData: { client_reference_id }`), which is where KeyGrant reads it. KeyGrant's docs page "Selling through Paddle" has the page.
+
 ## Building and testing
 
 ```bash

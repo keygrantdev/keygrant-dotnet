@@ -105,7 +105,8 @@ public sealed partial class License
     /// <c>client_reference_id</c>, or null when the device holds no activated licence. Send a customer
     /// there to buy an upgrade for the key they hold. The activation id, never the licence key: a URL
     /// lands in browser history and logs, and the activation id grants nothing on its own. The link's
-    /// own parameters and fragment are kept as written.
+    /// own parameters and fragment are kept as written. Selling through Paddle, the link is the tenant's
+    /// own checkout page, which gives <c>client_reference_id</c> to Paddle.js as custom data under the same name.
     /// </summary>
     /// <param name="paymentLinkUrl">The upgrade offer's payment link.</param>
     /// <returns>The link for this device, or null.</returns>
